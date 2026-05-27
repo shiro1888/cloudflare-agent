@@ -1,8 +1,14 @@
-import { formatBytes, getPingColor } from '../utils/format.js';
-import { getThemeStyles, getFooterHtml, getBaseStyles } from '../themes/styles.js';
+import { formatBytes } from '../utils/format.js';
+import { getThemeStyles, getFooterHtml, getBaseStyles, getThemeClass } from '../themes/styles.js';
+import { checkAuth, authResponse } from '../middleware/auth.js';
 import { escapeHtml, safeJsonInScript } from '../utils/sanitize.js';
 
 export async function handleServerDetail(request, env, sys, viewId) {
+  // 私有部署：未认证用户重定向到登录
+  if (sys.is_public !== 'true' && !(await checkAuth(request, env))) {
+    return authResponse(request);
+  }
+
   const server = await env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(viewId).first();
   if (!server) return new Response('Server not found', { status: 404 });
 
@@ -17,9 +23,7 @@ export async function handleServerDetail(request, env, sys, viewId) {
 
   const themeStyles = getThemeStyles(sys);
   const baseStyles = getBaseStyles();
-  const themeClass = (sys.theme === 'light' || sys.theme === 'theme2') ? 'light'
-                  : (sys.theme === 'dark'  || sys.theme === 'theme1') ? 'dark'
-                  : 'auto';
+  const themeClass = getThemeClass(sys);
 
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">

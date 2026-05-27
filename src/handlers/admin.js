@@ -140,63 +140,6 @@ export async function handleAdminAPI(request, env, sys) {
         headers: { 'Content-Type': 'application/json' }
       });
     }
-    else if (data.action === 'get_stats') {
-      // 获取统计数据
-      const { results: servers } = await env.DB.prepare(
-        'SELECT id, name, last_updated, country, cpu, ram, disk, net_in_speed, net_out_speed FROM servers'
-      ).all();
-      
-      const now = Date.now();
-      const stats = {
-        total: servers.length,
-        online: 0,
-        offline: 0,
-        total_cpu: 0,
-        total_ram: 0,
-        total_disk: 0,
-        total_net_in: 0,
-        total_net_out: 0
-      };
-      
-      servers.forEach(s => {
-        const lastUpdated = new Date(s.last_updated).getTime();
-        if ((now - lastUpdated) < 300000) {
-          stats.online++;
-          stats.total_cpu += parseFloat(s.cpu) || 0;
-          stats.total_ram += parseFloat(s.ram) || 0;
-          stats.total_disk += parseFloat(s.disk) || 0;
-          stats.total_net_in += parseFloat(s.net_in_speed) || 0;
-          stats.total_net_out += parseFloat(s.net_out_speed) || 0;
-        } else {
-          stats.offline++;
-        }
-      });
-      
-      if (stats.online > 0) {
-        stats.avg_cpu = (stats.total_cpu / stats.online).toFixed(2);
-        stats.avg_ram = (stats.total_ram / stats.online).toFixed(2);
-        stats.avg_disk = (stats.total_disk / stats.online).toFixed(2);
-      }
-      
-      return new Response(JSON.stringify({ success: true, stats }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    else if (data.action === 'clean_history') {
-      // 手动清理历史数据
-      const days = data.days || 7;
-      await env.DB.prepare(
-        `DELETE FROM metrics_history WHERE timestamp < datetime('now', '-' || ? || ' days')`
-      ).bind(days).run();
-      
-      return new Response(JSON.stringify({ 
-        success: true, 
-        message: `已清理 ${days} 天前的历史数据` 
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    
     return new Response(JSON.stringify({ error: '未知操作' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' }

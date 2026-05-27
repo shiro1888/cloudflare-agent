@@ -1,5 +1,5 @@
 import { checkAuth, authResponse } from '../middleware/auth.js';
-import { getThemeStyles, getFooterHtml, getBaseStyles } from '../themes/styles.js';
+import { getThemeStyles, getFooterHtml, getBaseStyles, getThemeClass } from '../themes/styles.js';
 import { escapeHtml, safeJsonInScript } from '../utils/sanitize.js';
 
 export async function handleAdminUI(request, env, sys) {
@@ -36,9 +36,7 @@ export async function handleAdminUI(request, env, sys) {
 
   const themeStyles = getThemeStyles(sys);
   const baseStyles = getBaseStyles();
-  const themeClass = (sys.theme === 'light' || sys.theme === 'theme2') ? 'light'
-                  : (sys.theme === 'dark'  || sys.theme === 'theme1') ? 'dark'
-                  : 'auto';
+  const themeClass = getThemeClass(sys);
 
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">

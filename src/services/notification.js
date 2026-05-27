@@ -45,10 +45,6 @@ export async function sendNotification(sys, msg) {
   }
 }
 
-// 兼容旧函数名（避免破坏可能的外部 import）
-export const sendTelegramNotification = sendNotification;
-export const sendWeworkNotification = sendNotification;
-
 export async function checkOfflineNodes(db, sys) {
   if (sys.tg_notify !== 'true') return;
   if (!sys.tg_bot_token) return;

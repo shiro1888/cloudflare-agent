@@ -1,6 +1,6 @@
 import { makeSessionCookie, clearSessionCookie, timingSafeStringEqual } from '../middleware/auth.js';
 import { checkRateLimit, clearRateLimit, getClientIp } from '../middleware/rate-limit.js';
-import { getThemeStyles, getBaseStyles } from '../themes/styles.js';
+import { getThemeStyles, getBaseStyles, getThemeClass } from '../themes/styles.js';
 import { escapeHtml, safeJsonInScript, sanitizeNextPath } from '../utils/sanitize.js';
 
 export async function handleLoginPage(request, env, sys) {
@@ -10,9 +10,7 @@ export async function handleLoginPage(request, env, sys) {
 
   const themeStyles = getThemeStyles(sys);
   const baseStyles = getBaseStyles();
-  const themeClass = (sys.theme === 'light' || sys.theme === 'theme2') ? 'light'
-                  : (sys.theme === 'dark'  || sys.theme === 'theme1') ? 'dark'
-                  : 'auto';
+  const themeClass = getThemeClass(sys);
 
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">

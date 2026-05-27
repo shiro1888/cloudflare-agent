@@ -1,65 +1,60 @@
 // =============================================
-// 主题样式 - 极简风格（浅色 / 深色）
+// 主题样式 - 极简风格（浅色 / 深色 / 自动）
 // =============================================
+//
+// 主题取值仅 3 种：'light' | 'dark' | 'auto'（默认）
+// 旧 theme1/theme2/theme6 已不再支持（重构前的遗留），
+// 数据库里若有这些值会被当作 'auto' 处理
+//
+
+const LIGHT_VARS = `
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #fafafa;
+  --border: #ececec;
+  --border-strong: #d4d4d4;
+  --text: #171717;
+  --text-2: #737373;
+  --text-3: #a3a3a3;
+  --green: #16a34a;
+  --red: #dc2626;
+  --amber: #d97706;
+  --blue: #2563eb;
+`;
+
+const DARK_VARS = `
+  --bg: #0a0a0a;
+  --surface: #0f0f0f;
+  --surface-2: #161616;
+  --border: #1f1f1f;
+  --border-strong: #2a2a2a;
+  --text: #f5f5f5;
+  --text-2: #a3a3a3;
+  --text-3: #737373;
+  --green: #22c55e;
+  --red: #ef4444;
+  --amber: #f59e0b;
+  --blue: #3b82f6;
+`;
+
+// 把 sys.theme 归一化为 'light' | 'dark' | 'auto'
+export function getThemeClass(sys) {
+  const t = sys && sys.theme;
+  if (t === 'light' || t === 'dark' || t === 'auto') return t;
+  return 'auto';
+}
 
 export function getThemeStyles(sys) {
-  // 主题基础变量
-  const lightVars = `
-    --bg: #ffffff;
-    --surface: #ffffff;
-    --surface-2: #fafafa;
-    --border: #ececec;
-    --border-strong: #d4d4d4;
-    --text: #171717;
-    --text-2: #737373;
-    --text-3: #a3a3a3;
-    --green: #16a34a;
-    --red: #dc2626;
-    --amber: #d97706;
-    --blue: #2563eb;
-  `;
-  const darkVars = `
-    --bg: #0a0a0a;
-    --surface: #0f0f0f;
-    --surface-2: #161616;
-    --border: #1f1f1f;
-    --border-strong: #2a2a2a;
-    --text: #f5f5f5;
-    --text-2: #a3a3a3;
-    --text-3: #737373;
-    --green: #22c55e;
-    --red: #ef4444;
-    --amber: #f59e0b;
-    --blue: #3b82f6;
-  `;
-
-  // 用户选择：'light' | 'dark' | 'auto'（默认）
-  // 兼容旧值 theme1/theme2/theme6
-  const choice = sys.theme || 'auto';
-  let rootVars;
-  let bodyClass = '';
-  if (choice === 'light' || choice === 'theme2') {
-    rootVars = lightVars;
-    bodyClass = 'light';
-  } else if (choice === 'dark' || choice === 'theme1') {
-    rootVars = darkVars;
-    bodyClass = 'dark';
-  } else {
-    // auto - prefers-color-scheme
-    rootVars = lightVars;
-    bodyClass = 'auto';
-  }
-
   return `
-    :root { ${rootVars} --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1); }
+    :root { ${LIGHT_VARS} --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1); }
     @media (prefers-color-scheme: dark) {
-      body.auto { ${darkVars} }
+      body.auto { ${DARK_VARS} }
     }
-    body.dark { ${darkVars} }
-    body.light { ${lightVars} }
-    /* 用户自定义CSS(theme6 兼容) */
-    ${(sys.theme === 'theme6' && sys.custom_css) ? sys.custom_css : ''}
-    /* 自定义背景 */
+    body.dark { ${DARK_VARS} }
+    body.light { ${LIGHT_VARS} }
+    /* 用户自定义 CSS（管理后台填的，可任意覆写） */
+    ${sys.custom_css || ''}
+    /* 自定义背景图片 */
     ${sys.custom_bg ? `
       body { background-image: url('${sys.custom_bg}'); background-size: cover; background-attachment: fixed; }
     ` : ''}

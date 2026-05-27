@@ -1,8 +1,59 @@
 import { checkAuth, authResponse } from '../middleware/auth.js';
-import { formatBytes, getPingColor } from '../utils/format.js';
-import { getThemeStyles, getFooterHtml, getBaseStyles } from '../themes/styles.js';
-import { handleServerDetail } from './server-detail.js';
+import { formatBytes } from '../utils/format.js';
+import { getThemeStyles, getFooterHtml, getBaseStyles, getThemeClass } from '../themes/styles.js';
 import { escapeHtml, safeJsonInScript } from '../utils/sanitize.js';
+
+// 把 D1 row 转成前端友好的服务器对象（dashboard / dashboardAPI 共用）
+function toClientServer(server, now, sys) {
+  const lastUpdated = new Date(server.last_updated).getTime();
+  const isOnline = (now - lastUpdated) < 120000;
+  const useMonthly = sys.auto_reset_traffic === 'true';
+  const rx_val = useMonthly ? (parseFloat(server.monthly_rx) || 0) : (parseFloat(server.net_rx) || 0);
+  const tx_val = useMonthly ? (parseFloat(server.monthly_tx) || 0) : (parseFloat(server.net_tx) || 0);
+
+  let expireText = '';
+  if (server.expire_date) {
+    const expTime = new Date(server.expire_date).getTime();
+    if (!isNaN(expTime)) {
+      const diff = expTime - now;
+      expireText = diff > 0 ? Math.ceil(diff / 86400000) + 'd' : 'EXPIRED';
+    }
+  }
+
+  return {
+    id: server.id,
+    name: server.name || 'unnamed',
+    country: (server.country || 'xx').toUpperCase(),
+    group: server.server_group || '默认分组',
+    online: isOnline,
+    offlineDuration: isOnline ? 0 : Math.floor((now - lastUpdated) / 1000),
+    cpu: parseFloat(server.cpu) || 0,
+    ram: parseFloat(server.ram) || 0,
+    disk: parseFloat(server.disk) || 0,
+    netIn: server.net_in_speed || '0',
+    netOut: server.net_out_speed || '0',
+    netInFmt: formatBytes(server.net_in_speed),
+    netOutFmt: formatBytes(server.net_out_speed),
+    monthlyRx: formatBytes(rx_val),
+    monthlyTx: formatBytes(tx_val),
+    os: server.os || 'Linux',
+    arch: server.arch || '',
+    ipv4: server.ip_v4 === '1',
+    ipv6: server.ip_v6 === '1',
+    price: server.price || '',
+    expire: expireText || (server.expire_date ? '' : '永久'),
+    bandwidth: server.bandwidth || '',
+    trafficLimit: server.traffic_limit || '',
+    pingCt: parseInt(server.ping_ct) || 0,
+    pingCu: parseInt(server.ping_cu) || 0,
+    pingCm: parseInt(server.ping_cm) || 0,
+    pingBd: parseInt(server.ping_bd) || 0,
+    lastUpdate: Math.max(0, Math.round((now - lastUpdated) / 1000)),
+    // 仅给 handleDashboard 内部统计用，handleDashboardAPI 不需要
+    _rxVal: rx_val,
+    _txVal: tx_val,
+  };
+}
 
 export async function handleServerAPI(request, env, sys) {
   if (sys.is_public !== 'true' && !(await checkAuth(request, env))) {
@@ -25,49 +76,10 @@ export async function handleDashboardAPI(request, env, sys) {
     'SELECT * FROM servers ORDER BY server_group, name'
   ).all();
   const now = Date.now();
-  const servers = (results || []).map(server => {
-    const lastUpdated = new Date(server.last_updated).getTime();
-    const isOnline = (now - lastUpdated) < 120000;
-    const rx_val = sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_rx || 0) : parseFloat(server.net_rx || 0);
-    const tx_val = sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_tx || 0) : parseFloat(server.net_tx || 0);
-    let expireText = '';
-    if (server.expire_date) {
-      const expTime = new Date(server.expire_date).getTime();
-      if (!isNaN(expTime)) {
-        const diff = expTime - now;
-        expireText = diff > 0 ? Math.ceil(diff / 86400000) + 'd' : 'EXPIRED';
-      }
-    }
-    return {
-      id: server.id,
-      name: server.name || 'unnamed',
-      country: (server.country || 'xx').toUpperCase(),
-      group: server.server_group || '默认分组',
-      online: isOnline,
-      offlineDuration: isOnline ? 0 : Math.floor((now - lastUpdated) / 1000),
-      cpu: parseFloat(server.cpu) || 0,
-      ram: parseFloat(server.ram) || 0,
-      disk: parseFloat(server.disk) || 0,
-      netIn: server.net_in_speed || '0',
-      netOut: server.net_out_speed || '0',
-      netInFmt: formatBytes(server.net_in_speed),
-      netOutFmt: formatBytes(server.net_out_speed),
-      monthlyRx: formatBytes(rx_val),
-      monthlyTx: formatBytes(tx_val),
-      os: server.os || 'Linux',
-      arch: server.arch || '',
-      ipv4: server.ip_v4 === '1',
-      ipv6: server.ip_v6 === '1',
-      price: server.price || '',
-      expire: expireText || (server.expire_date ? '' : '永久'),
-      bandwidth: server.bandwidth || '',
-      trafficLimit: server.traffic_limit || '',
-      pingCt: parseInt(server.ping_ct) || 0,
-      pingCu: parseInt(server.ping_cu) || 0,
-      pingCm: parseInt(server.ping_cm) || 0,
-      pingBd: parseInt(server.ping_bd) || 0,
-      lastUpdate: Math.max(0, Math.round((now - lastUpdated) / 1000)),
-    };
+  const servers = (results || []).map(s => {
+    const c = toClientServer(s, now, sys);
+    delete c._rxVal; delete c._txVal;
+    return c;
   });
   return new Response(JSON.stringify({ servers }), {
     headers: { 'Content-Type': 'application/json; charset=UTF-8' }
@@ -91,80 +103,30 @@ export async function handleDashboard(request, env, sys) {
   let globalNetTx = 0, globalNetRx = 0;
   const countryStats = {};
 
-  // 给前端的服务器数据(精简版)
-  const clientServers = [];
+  const clientServers = (results || []).map(server => {
+    const c = toClientServer(server, now, sys);
 
-  if (results && results.length > 0) {
-    for (const server of results) {
-      const lastUpdated = new Date(server.last_updated).getTime();
-      const isOnline = (now - lastUpdated) < 120000;
-
-      if (isOnline) {
-        globalOnline++;
-        globalSpeedIn += parseFloat(server.net_in_speed) || 0;
-        globalSpeedOut += parseFloat(server.net_out_speed) || 0;
-      } else {
-        globalOffline++;
-      }
-
-      const rx_val = sys.auto_reset_traffic === 'true'
-        ? parseFloat(server.monthly_rx || 0)
-        : parseFloat(server.net_rx || 0);
-      const tx_val = sys.auto_reset_traffic === 'true'
-        ? parseFloat(server.monthly_tx || 0)
-        : parseFloat(server.net_tx || 0);
-
-      globalNetTx += tx_val;
-      globalNetRx += rx_val;
-
-      let cCodeMap = (server.country || 'xx').toUpperCase();
-      if (cCodeMap === 'TW') cCodeMap = 'CN';
-      if (cCodeMap !== 'XX') {
-        countryStats[cCodeMap] = (countryStats[cCodeMap] || 0) + 1;
-      }
-
-      // 推算 expire 显示
-      let expireText = '';
-      if (server.expire_date) {
-        const expTime = new Date(server.expire_date).getTime();
-        if (!isNaN(expTime)) {
-          const diff = expTime - now;
-          expireText = diff > 0 ? Math.ceil(diff / 86400000) + 'd' : 'EXPIRED';
-        }
-      }
-
-      clientServers.push({
-        id: server.id,
-        name: server.name || 'unnamed',
-        country: (server.country || 'xx').toUpperCase(),
-        group: server.server_group || '默认分组',
-        online: isOnline,
-        offlineDuration: isOnline ? 0 : Math.floor((now - lastUpdated) / 1000),
-        cpu: parseFloat(server.cpu) || 0,
-        ram: parseFloat(server.ram) || 0,
-        disk: parseFloat(server.disk) || 0,
-        netIn: server.net_in_speed || '0',
-        netOut: server.net_out_speed || '0',
-        netInFmt: formatBytes(server.net_in_speed),
-        netOutFmt: formatBytes(server.net_out_speed),
-        monthlyRx: formatBytes(rx_val),
-        monthlyTx: formatBytes(tx_val),
-        os: server.os || 'Linux',
-        arch: server.arch || '',
-        ipv4: server.ip_v4 === '1',
-        ipv6: server.ip_v6 === '1',
-        price: server.price || '',
-        expire: expireText || (server.expire_date ? '' : '永久'),
-        bandwidth: server.bandwidth || '',
-        trafficLimit: server.traffic_limit || '',
-        pingCt: parseInt(server.ping_ct) || 0,
-        pingCu: parseInt(server.ping_cu) || 0,
-        pingCm: parseInt(server.ping_cm) || 0,
-        pingBd: parseInt(server.ping_bd) || 0,
-        lastUpdate: Math.max(0, Math.round((now - lastUpdated) / 1000)),
-      });
+    // 同步统计
+    if (c.online) {
+      globalOnline++;
+      globalSpeedIn  += parseFloat(server.net_in_speed) || 0;
+      globalSpeedOut += parseFloat(server.net_out_speed) || 0;
+    } else {
+      globalOffline++;
     }
-  }
+    globalNetRx += c._rxVal;
+    globalNetTx += c._txVal;
+
+    // 国家统计（TW 归到 CN）
+    let cCodeMap = c.country;
+    if (cCodeMap === 'TW') cCodeMap = 'CN';
+    if (cCodeMap !== 'XX') {
+      countryStats[cCodeMap] = (countryStats[cCodeMap] || 0) + 1;
+    }
+
+    delete c._rxVal; delete c._txVal;
+    return c;
+  });
 
   const summary = {
     total: results.length,
@@ -180,9 +142,7 @@ export async function handleDashboard(request, env, sys) {
   const themeStyles = getThemeStyles(sys);
   const baseStyles = getBaseStyles();
 
-  const themeClass = (sys.theme === 'light' || sys.theme === 'theme2') ? 'light'
-                  : (sys.theme === 'dark'  || sys.theme === 'theme1') ? 'dark'
-                  : 'auto';
+  const themeClass = getThemeClass(sys);
 
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">

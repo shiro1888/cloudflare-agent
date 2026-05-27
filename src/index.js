@@ -27,14 +27,14 @@ const SECURITY_HEADERS = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
 
-// 给响应附加安全头（仅 HTML 响应需要）
+// 给响应附加安全头（仅 HTML 响应需要，避免污染 JSON / 探针响应）
 function withSecurityHeaders(resp) {
   if (!resp) return resp;
   const ct = resp.headers.get('Content-Type') || '';
   if (!ct.includes('text/html')) return resp;
   const headers = new Headers(resp.headers);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
-  return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
+  return new Response(resp.body, { status: resp.status, headers });
 }
 
 export default {
