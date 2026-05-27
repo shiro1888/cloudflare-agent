@@ -1,4 +1,4 @@
-name = "server-monitor-pro"  # 这就是 CF_WORKER_SUBDOMAIN
+name = "cloudflare-agent"  # 与 GitHub 仓库同名
 main = "src/index.js"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]

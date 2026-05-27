@@ -61,7 +61,7 @@ jobs:
         if: success()
         run: |
           echo "🎉 部署成功！"
-          echo "访问: https://server-monitor-pro.<你的子域>.workers.dev"
+          echo "访问: https://cloudflare-agent.<你的子域>.workers.dev"
 
       - name: ❌ Deployment Failed
         if: failure()

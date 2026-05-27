@@ -140,7 +140,7 @@ git push
 部署完成后，访问：
 
 ```
-https://server-monitor-pro.<你的子域>.workers.dev/
+https://cloudflare-agent.<你的子域>.workers.dev/
 ```
 
 子域可以在 **Cloudflare Dashboard → Workers & Pages → 你的项目** 看到。
