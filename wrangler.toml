@@ -17,7 +17,7 @@ binding = "ASSETS"
 # D1 数据库绑定
 [[d1_databases]]
 binding = "DB"
-database_name = "server-monitor-db"
-database_id = "dcfcf4f9-3cc2-4ac1-af0a-37a84dc6004a"
+database_name = "server-monitor-db-apac"
+database_id = "da55d31d-7d48-4ebc-8081-c3ab26930fb0"
 
 [vars]

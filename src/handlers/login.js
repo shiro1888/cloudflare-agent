@@ -128,7 +128,7 @@ export async function handleLoginPage(request, env, sys) {
       border: 2px solid currentColor;
       border-top-color: transparent;
       border-radius: 50%;
-      animation: spin .8s linear infinite;
+      animation: spin 1.5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>

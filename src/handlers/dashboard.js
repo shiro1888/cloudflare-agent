@@ -82,7 +82,11 @@ export async function handleDashboardAPI(request, env, sys) {
     return c;
   });
   return new Response(JSON.stringify({ servers }), {
-    headers: { 'Content-Type': 'application/json; charset=UTF-8' }
+    headers: {
+      'Content-Type': 'application/json; charset=UTF-8',
+      // 边缘缓存 5 秒，多次刷新走缓存（D1 也要缓存）
+      'Cache-Control': 'private, max-age=5'
+    }
   });
 }
 
