@@ -8,6 +8,7 @@ on:
       - '**.md'
       - '.gitignore'
       - 'LICENSE'
+      - 'preview/**'
   workflow_dispatch:
 
 jobs:
@@ -21,43 +22,32 @@ jobs:
       - name: 🔧 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
 
       - name: 📦 Install dependencies
         run: npm install
 
-      - name: 📝 Create wrangler.toml
+      # 把 D1 数据库 ID 注入到 wrangler.toml（这个不是机密）
+      # API_SECRET / API_USER_NAME 通过 wrangler secret put 注入，不写入文件
+      - name: 📝 Inject D1 database_id into wrangler.toml
         run: |
-          cat > wrangler.toml << 'WEOF'
-          name = "server-monitor-pro"
-          main = "src/index.js"
-          compatibility_date = "2024-12-01"
-          compatibility_flags = ["nodejs_compat"]
-          
-          # 每日定时任务（UTC 0点，即北京时间 8点）
-          [triggers]
-          crons = ["0 0 * * *"]
-          
-          [assets]
-          directory = "./public"
-          binding = "ASSETS"
-          
-          [[d1_databases]]
-          binding = "DB"
-          database_name = "server-monitor-db"
-          database_id = "D1_PLACEHOLDER"
-          
-          [vars]
-          API_SECRET = "SECRET_PLACEHOLDER"
-          API_USER_NAME = "USER_NAME_PLACEHOLDER"
-          WEOF
-          
-          # 替换占位符
-          sed -i "s|D1_PLACEHOLDER|${{ secrets.D1_DATABASE_ID }}|g" wrangler.toml
-          sed -i "s|SECRET_PLACEHOLDER|${{ secrets.API_SECRET }}|g" wrangler.toml
-          sed -i "s|USER_NAME_PLACEHOLDER|${{ secrets.API_USER_NAME }}|g" wrangler.toml
-          
-          echo "✅ wrangler.toml 已生成"
+          # 在 [[d1_databases]] 块里追加 database_id（如果还没有）
+          if ! grep -q "database_id" wrangler.toml; then
+            sed -i '/database_name = "server-monitor-db"/a database_id = "${{ secrets.D1_DATABASE_ID }}"' wrangler.toml
+          fi
+          echo "✅ wrangler.toml 准备完毕"
+          echo "----------------"
+          cat wrangler.toml
+          echo "----------------"
+
+      # 用 wrangler secret 注入凭据（部署后存为 Worker secrets，不会进入 bundle）
+      - name: 🔐 Set Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          echo "${{ secrets.API_SECRET }}" | npx wrangler secret put API_SECRET
+          echo "${{ secrets.API_USER_NAME }}" | npx wrangler secret put API_USER_NAME
 
       - name: 🚀 Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
@@ -70,13 +60,9 @@ jobs:
       - name: ✅ Deployment Success
         if: success()
         run: |
-          echo "============================================"
-          echo "  🎉 部署成功！"
-          echo "============================================"
+          echo "🎉 部署成功！"
+          echo "访问: https://server-monitor-pro.<你的子域>.workers.dev"
 
       - name: ❌ Deployment Failed
         if: failure()
-        run: |
-          echo "============================================"
-          echo "  💥 部署失败！请检查 Actions 日志"
-          echo "============================================"
+        run: echo "💥 部署失败！请检查 Actions 日志"

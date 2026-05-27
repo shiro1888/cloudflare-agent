@@ -421,7 +421,7 @@ create_service() {
     cat > "${SERVICE_FILE}" << EOF
 [Unit]
 Description=CF Server Monitor Probe Agent
-Documentation=https://github.com/your-repo/CF-Server-Monitor-Pro
+Documentation=https://github.com/shiro1888/cloudflare-agent
 After=network.target network-online.target
 Wants=network-online.target
 

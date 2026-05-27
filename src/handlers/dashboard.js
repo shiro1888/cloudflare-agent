@@ -1,49 +1,104 @@
 import { checkAuth, authResponse } from '../middleware/auth.js';
 import { formatBytes, getPingColor } from '../utils/format.js';
-import { getThemeStyles, getFooterHtml } from '../themes/styles.js';
+import { getThemeStyles, getFooterHtml, getBaseStyles } from '../themes/styles.js';
 import { handleServerDetail } from './server-detail.js';
+import { escapeHtml, safeJsonInScript } from '../utils/sanitize.js';
 
 export async function handleServerAPI(request, env, sys) {
-  if (sys.is_public !== 'true' && !checkAuth(request, env)) {
-    return authResponse(sys.site_title);
+  if (sys.is_public !== 'true' && !(await checkAuth(request, env))) {
+    return authResponse(request);
   }
-  
   const url = new URL(request.url);
   const id = url.searchParams.get('id');
-  
   if (!id) return new Response('Missing ID', { status: 400 });
-  
   const server = await env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(id).first();
   if (!server) return new Response('Not Found', { status: 404 });
-  
-  return new Response(JSON.stringify(server), { 
-    headers: { 'Content-Type': 'application/json' } 
+  return new Response(JSON.stringify(server), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// 给前台 dashboard 用的精简数据 API（用于自动刷新）
+export async function handleDashboardAPI(request, env, sys) {
+  if (sys.is_public !== 'true' && !(await checkAuth(request, env))) {
+    return authResponse(request);
+  }
+  const { results } = await env.DB.prepare(
+    'SELECT * FROM servers ORDER BY server_group, name'
+  ).all();
+  const now = Date.now();
+  const servers = (results || []).map(server => {
+    const lastUpdated = new Date(server.last_updated).getTime();
+    const isOnline = (now - lastUpdated) < 120000;
+    const rx_val = sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_rx || 0) : parseFloat(server.net_rx || 0);
+    const tx_val = sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_tx || 0) : parseFloat(server.net_tx || 0);
+    let expireText = '';
+    if (server.expire_date) {
+      const expTime = new Date(server.expire_date).getTime();
+      if (!isNaN(expTime)) {
+        const diff = expTime - now;
+        expireText = diff > 0 ? Math.ceil(diff / 86400000) + 'd' : 'EXPIRED';
+      }
+    }
+    return {
+      id: server.id,
+      name: server.name || 'unnamed',
+      country: (server.country || 'xx').toUpperCase(),
+      group: server.server_group || '默认分组',
+      online: isOnline,
+      offlineDuration: isOnline ? 0 : Math.floor((now - lastUpdated) / 1000),
+      cpu: parseFloat(server.cpu) || 0,
+      ram: parseFloat(server.ram) || 0,
+      disk: parseFloat(server.disk) || 0,
+      netIn: server.net_in_speed || '0',
+      netOut: server.net_out_speed || '0',
+      netInFmt: formatBytes(server.net_in_speed),
+      netOutFmt: formatBytes(server.net_out_speed),
+      monthlyRx: formatBytes(rx_val),
+      monthlyTx: formatBytes(tx_val),
+      os: server.os || 'Linux',
+      arch: server.arch || '',
+      ipv4: server.ip_v4 === '1',
+      ipv6: server.ip_v6 === '1',
+      price: server.price || '',
+      expire: expireText || (server.expire_date ? '' : '永久'),
+      bandwidth: server.bandwidth || '',
+      trafficLimit: server.traffic_limit || '',
+      pingCt: parseInt(server.ping_ct) || 0,
+      pingCu: parseInt(server.ping_cu) || 0,
+      pingCm: parseInt(server.ping_cm) || 0,
+      pingBd: parseInt(server.ping_bd) || 0,
+      lastUpdate: Math.max(0, Math.round((now - lastUpdated) / 1000)),
+    };
+  });
+  return new Response(JSON.stringify({ servers }), {
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' }
   });
 }
 
 export async function handleDashboard(request, env, sys) {
-  if (sys.is_public !== 'true' && !checkAuth(request, env)) {
-    return authResponse(sys.site_title);
+  if (sys.is_public !== 'true' && !(await checkAuth(request, env))) {
+    return authResponse(request);
   }
 
   const { results } = await env.DB.prepare(
     'SELECT * FROM servers ORDER BY server_group, name'
   ).all();
-  
+
   const now = Date.now();
 
-  // 统计全局数据
+  // 统计
   let globalOnline = 0, globalOffline = 0;
   let globalSpeedIn = 0, globalSpeedOut = 0;
   let globalNetTx = 0, globalNetRx = 0;
-  const groups = {};
   const countryStats = {};
+
+  // 给前端的服务器数据(精简版)
+  const clientServers = [];
 
   if (results && results.length > 0) {
     for (const server of results) {
       const lastUpdated = new Date(server.last_updated).getTime();
       const isOnline = (now - lastUpdated) < 120000;
-      
+
       if (isOnline) {
         globalOnline++;
         globalSpeedIn += parseFloat(server.net_in_speed) || 0;
@@ -51,1060 +106,549 @@ export async function handleDashboard(request, env, sys) {
       } else {
         globalOffline++;
       }
-      
-      const rx_val = sys.auto_reset_traffic === 'true' 
-        ? parseFloat(server.monthly_rx || 0) 
+
+      const rx_val = sys.auto_reset_traffic === 'true'
+        ? parseFloat(server.monthly_rx || 0)
         : parseFloat(server.net_rx || 0);
-      const tx_val = sys.auto_reset_traffic === 'true' 
-        ? parseFloat(server.monthly_tx || 0) 
+      const tx_val = sys.auto_reset_traffic === 'true'
+        ? parseFloat(server.monthly_tx || 0)
         : parseFloat(server.net_tx || 0);
 
       globalNetTx += tx_val;
       globalNetRx += rx_val;
 
-      // 分组
-      const grpName = server.server_group || '默认分组';
-      if (!groups[grpName]) groups[grpName] = [];
-      groups[grpName].push(server);
-
-      // 国家统计
       let cCodeMap = (server.country || 'xx').toUpperCase();
       if (cCodeMap === 'TW') cCodeMap = 'CN';
       if (cCodeMap !== 'XX') {
         countryStats[cCodeMap] = (countryStats[cCodeMap] || 0) + 1;
       }
-    }
-  }
 
-  // 生成过滤器标签
-  let filterTagsHtml = `<span class="filter-tag active" data-filter="all">[All] ${results.length}</span>`;
-  for (const [code, count] of Object.entries(countryStats).sort()) {
-    filterTagsHtml += `<span class="filter-tag" data-filter="${code.toLowerCase()}">
-      <img src="https://flagcdn.com/16x12/${code.toLowerCase()}.png" alt="${code}"> ${code} [${count}]
-    </span>`;
-  }
-
-  // 生成卡片和表格内容
-  let cardContentHtml = '';
-  let tableBodyHtml = '';
-
-  if (Object.keys(groups).length === 0) {
-    cardContentHtml = '<div class="empty-state">[!] 暂无服务器，请在 <a href="/admin" style="color: var(--accent-cyan);">后台管理</a> 中添加</div>';
-  } else {
-    for (const [grpName, grpServers] of Object.entries(groups)) {
-      cardContentHtml += `<div class="group-section">
-        <div class="group-header" data-group="${grpName}">
-          <span class="prompt-sign">#</span> ${grpName} 
-          <span class="group-count">[${grpServers.length}]</span>
-        </div>
-        <div class="servers-grid">`;
-      
-      for (const server of grpServers) {
-        const lastUpdated = new Date(server.last_updated).getTime();
-        const isOnline = (now - lastUpdated) < 120000;
-        const statusColor = isOnline ? 'var(--accent-green)' : 'var(--accent-red)';
-        const statusText = isOnline ? 'ONLINE' : 'OFFLINE';
-        
-        const cpu = parseFloat(server.cpu || 0).toFixed(1);
-        const ram = parseFloat(server.ram || 0).toFixed(1);
-        const disk = parseFloat(server.disk || 0).toFixed(1);
-        const netInSpeed = formatBytes(server.net_in_speed);
-        const netOutSpeed = formatBytes(server.net_out_speed);
-        const monthlyRx = formatBytes(server.monthly_rx);
-        const monthlyTx = formatBytes(server.monthly_tx);
-        
-        const cCode = (server.country || 'xx').toLowerCase();
-        const flagHtml = cCode !== 'xx' 
-          ? `<img src="https://flagcdn.com/24x18/${cCode}.png" alt="${cCode}" style="vertical-align: middle; margin-right: 5px; border-radius: 2px; filter: brightness(0.9);">` 
-          : '🏳️';
-        
-        // 元数据
-        let metaHtml = '';
-        if (sys.show_price === 'true') {
-          metaHtml += `<div class="card-meta">💰 ${server.price || '免费'}</div>`;
+      // 推算 expire 显示
+      let expireText = '';
+      if (server.expire_date) {
+        const expTime = new Date(server.expire_date).getTime();
+        if (!isNaN(expTime)) {
+          const diff = expTime - now;
+          expireText = diff > 0 ? Math.ceil(diff / 86400000) + 'd' : 'EXPIRED';
         }
-        if (sys.show_expire === 'true') {
-          let expireText = '永久';
-          if (server.expire_date) {
-            const expTime = new Date(server.expire_date).getTime();
-            if (!isNaN(expTime)) {
-              const diff = expTime - now;
-              expireText = diff > 0 
-                ? Math.ceil(diff / (1000 * 3600 * 24)) + 'd' 
-                : '<span style="color:var(--accent-red);">EXPIRED</span>';
-            }
-          }
-          metaHtml += `<div class="card-meta">📅 ${expireText}</div>`;
-        }
-
-        // 徽章
-        let badgesHtml = '';
-        if (sys.show_bw === 'true' && server.bandwidth) 
-          badgesHtml += `<span class="badge badge-bw">${server.bandwidth}</span>`;
-        if (sys.show_tf === 'true' && server.traffic_limit) 
-          badgesHtml += `<span class="badge badge-tf">${server.traffic_limit}</span>`;
-        if (server.ip_v4 === '1') badgesHtml += `<span class="badge badge-v4">IPv4</span>`;
-        if (server.ip_v6 === '1') badgesHtml += `<span class="badge badge-v6">IPv6</span>`;
-
-        // 延迟信息
-        const pingHtml = `
-          <div class="ping-panel">
-            <div class="ping-item"><span class="ping-label">CT</span><span class="ping-value" style="color:${getPingColor(server.ping_ct)}">${server.ping_ct === '0' ? 'TIMEOUT' : server.ping_ct + 'ms'}</span></div>
-            <div class="ping-item"><span class="ping-label">CU</span><span class="ping-value" style="color:${getPingColor(server.ping_cu)}">${server.ping_cu === '0' ? 'TIMEOUT' : server.ping_cu + 'ms'}</span></div>
-            <div class="ping-item"><span class="ping-label">CM</span><span class="ping-value" style="color:${getPingColor(server.ping_cm)}">${server.ping_cm === '0' ? 'TIMEOUT' : server.ping_cm + 'ms'}</span></div>
-            <div class="ping-item"><span class="ping-label">BD</span><span class="ping-value" style="color:${getPingColor(server.ping_bd)}">${server.ping_bd === '0' ? 'TIMEOUT' : server.ping_bd + 'ms'}</span></div>
-          </div>`;
-
-        cardContentHtml += `
-          <a href="/?id=${server.id}" class="server-card" data-country="${cCode}">
-            <div class="server-card-header">
-              <div class="server-identity">
-                <div class="status-indicator" style="background:${statusColor}; box-shadow: 0 0 8px ${statusColor};"></div>
-                ${flagHtml}
-                <span class="server-name">${server.name}</span>
-              </div>
-              <span class="status-label" style="color:${statusColor}; border-color:${statusColor};">${statusText}</span>
-            </div>
-            
-            <div class="server-meta">
-              ${metaHtml}
-              <div class="card-badges">${badgesHtml}</div>
-            </div>
-            
-            <div class="server-stats">
-              <div class="stat-row">
-                <span class="stat-key">CPU</span>
-                <div class="stat-bar-container">
-                  <div class="stat-bar-fill" style="width:${cpu}%; background: var(--accent-cyan);"></div>
-                </div>
-                <span class="stat-value">${cpu}%</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-key">RAM</span>
-                <div class="stat-bar-container">
-                  <div class="stat-bar-fill" style="width:${ram}%; background: var(--accent-purple);"></div>
-                </div>
-                <span class="stat-value">${ram}%</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-key">DISK</span>
-                <div class="stat-bar-container">
-                  <div class="stat-bar-fill" style="width:${disk}%; background: var(--accent-green);"></div>
-                </div>
-                <span class="stat-value">${disk}%</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-key">NET</span>
-                <span class="net-down">▼ ${netInSpeed}/s</span>
-                <span class="net-up">▲ ${netOutSpeed}/s</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-key">TRF</span>
-                <span class="net-down">▼ ${monthlyRx}</span>
-                <span class="net-up">▲ ${monthlyTx}</span>
-              </div>
-            </div>
-            
-            ${pingHtml}
-          </a>`;
-
-        tableBodyHtml += `
-          <tr onclick="window.location.href='/?id=${server.id}'" style="cursor:pointer;" data-country="${cCode}">
-            <td style="text-align:center;"><div class="status-indicator" style="background:${statusColor}; display:inline-block; margin:0; width:8px; height:8px;"></div></td>
-            <td><b>${server.name}</b></td>
-            <td>${flagHtml} ${cCode.toUpperCase()}</td>
-            <td><span class="os-label">${server.os || 'Linux'} / ${server.arch || 'KVM'}</span></td>
-            <td>
-              <div class="table-stat">
-                <div class="stat-bar-container" style="width:60px;">
-                  <div class="stat-bar-fill" style="width:${cpu}%; background: var(--accent-cyan);"></div>
-                </div>
-                <span>${cpu}%</span>
-              </div>
-            </td>
-            <td>
-              <div class="table-stat">
-                <div class="stat-bar-container" style="width:60px;">
-                  <div class="stat-bar-fill" style="width:${ram}%; background: var(--accent-purple);"></div>
-                </div>
-                <span>${ram}%</span>
-              </div>
-            </td>
-            <td>
-              <div class="table-stat">
-                <div class="stat-bar-container" style="width:60px;">
-                  <div class="stat-bar-fill" style="width:${disk}%; background: var(--accent-green);"></div>
-                </div>
-                <span>${disk}%</span>
-              </div>
-            </td>
-            <td>${netInSpeed}/s</td>
-            <td>${netOutSpeed}/s</td>
-            <td>${monthlyRx}</td>
-            <td>${monthlyTx}</td>
-            <td class="update-time">${Math.round((now - lastUpdated)/1000)}s ago</td>
-          </tr>`;
       }
-      cardContentHtml += `</div></div>`;
+
+      clientServers.push({
+        id: server.id,
+        name: server.name || 'unnamed',
+        country: (server.country || 'xx').toUpperCase(),
+        group: server.server_group || '默认分组',
+        online: isOnline,
+        offlineDuration: isOnline ? 0 : Math.floor((now - lastUpdated) / 1000),
+        cpu: parseFloat(server.cpu) || 0,
+        ram: parseFloat(server.ram) || 0,
+        disk: parseFloat(server.disk) || 0,
+        netIn: server.net_in_speed || '0',
+        netOut: server.net_out_speed || '0',
+        netInFmt: formatBytes(server.net_in_speed),
+        netOutFmt: formatBytes(server.net_out_speed),
+        monthlyRx: formatBytes(rx_val),
+        monthlyTx: formatBytes(tx_val),
+        os: server.os || 'Linux',
+        arch: server.arch || '',
+        ipv4: server.ip_v4 === '1',
+        ipv6: server.ip_v6 === '1',
+        price: server.price || '',
+        expire: expireText || (server.expire_date ? '' : '永久'),
+        bandwidth: server.bandwidth || '',
+        trafficLimit: server.traffic_limit || '',
+        pingCt: parseInt(server.ping_ct) || 0,
+        pingCu: parseInt(server.ping_cu) || 0,
+        pingCm: parseInt(server.ping_cm) || 0,
+        pingBd: parseInt(server.ping_bd) || 0,
+        lastUpdate: Math.max(0, Math.round((now - lastUpdated) / 1000)),
+      });
     }
   }
+
+  const summary = {
+    total: results.length,
+    online: globalOnline,
+    offline: globalOffline,
+    speedIn: formatBytes(globalSpeedIn),
+    speedOut: formatBytes(globalSpeedOut),
+    trafficIn: formatBytes(globalNetRx),
+    trafficOut: formatBytes(globalNetTx),
+    isMonthly: sys.auto_reset_traffic === 'true',
+  };
 
   const themeStyles = getThemeStyles(sys);
-  
+  const baseStyles = getBaseStyles();
+
+  const themeClass = (sys.theme === 'light' || sys.theme === 'theme2') ? 'light'
+                  : (sys.theme === 'dark'  || sys.theme === 'theme1') ? 'dark'
+                  : 'auto';
+
   const html = `<!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${sys.site_title}</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-  <script id="map-data" type="application/json">${JSON.stringify(countryStats)}</script>
+  <title>${escapeHtml(sys.site_title)}</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin=""/>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js"></script>
   ${sys.custom_head || ''}
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
-    
-    :root {
-      --bg-primary: #0a0e14;
-      --bg-secondary: #12171f;
-      --bg-card: #151b24;
-      --bg-hover: #1a2230;
-      --border-color: #1e2a3a;
-      --border-active: #2a3a4f;
-      --text-primary: #d3dae3;
-      --text-secondary: #8999af;
-      --text-muted: #5c6d82;
-      --accent-green: #00d4aa;
-      --accent-blue: #4da6ff;
-      --accent-purple: #b392f0;
-      --accent-pink: #f778ba;
-      --accent-yellow: #ffb870;
-      --accent-red: #f85149;
-      --accent-cyan: #39d2c0;
-      --terminal-font: 'JetBrains Mono', 'Courier New', monospace;
-    }
-    
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    
-    body { 
-      font-family: var(--terminal-font);
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      min-height: 100vh;
-      line-height: 1.5;
-      position: relative;
-      font-size: 13px;
-    }
-    
-    body::before {
-      content: '';
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 2px,
-        rgba(0, 0, 0, 0.03) 2px,
-        rgba(0, 0, 0, 0.03) 4px
-      );
-      pointer-events: none;
-      z-index: 9999;
-    }
-    
-    .container { max-width: 1500px; margin: 0 auto; padding: 16px; position: relative; }
-    
-    /* 终端顶部栏 */
-    .terminal-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 16px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px 6px 0 0;
-      margin-bottom: 0;
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
-    
-    .terminal-dots {
-      display: flex;
-      gap: 8px;
-    }
-    
-    .terminal-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
-    
-    .terminal-dot.red { background: #ff5f56; }
-    .terminal-dot.yellow { background: #ffbd2e; }
-    .terminal-dot.green { background: #27c93f; }
-    
-    .terminal-title {
-      color: var(--text-primary);
-      font-weight: 600;
-      font-size: 12px;
-    }
-    
-    /* 导航区域 */
-    .nav-area {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-top: none;
-      padding: 16px;
-      margin-bottom: 20px;
-    }
-    
-    .header-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-    
-    .site-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: var(--accent-green);
-      text-shadow: 0 0 10px rgba(0, 212, 170, 0.3);
-    }
-    
-    .controls-group {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    
-    .view-toggle {
-      display: flex;
-      gap: 2px;
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 4px;
-      padding: 3px;
-    }
-    
-    .toggle-btn {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      border-radius: 3px;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--text-secondary);
-      font-family: var(--terminal-font);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      transition: all 0.2s;
-    }
-    
-    .toggle-btn:hover {
-      background: var(--bg-hover);
-      color: var(--text-primary);
-    }
-    
-    .toggle-btn.active {
-      background: var(--accent-green);
-      color: #000;
-    }
-    
-    .admin-link {
-      padding: 6px 14px;
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      color: var(--accent-cyan);
-      text-decoration: none;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      transition: all 0.2s;
-    }
-    
-    .admin-link:hover {
-      background: var(--bg-hover);
-      border-color: var(--border-active);
-    }
-    
-    /* 过滤器栏 */
-    .filter-bar {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-bottom: 16px;
-    }
-    
-    .filter-tag {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 12px;
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 500;
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: all 0.2s;
-      font-family: var(--terminal-font);
-    }
-    
-    .filter-tag:hover {
-      border-color: var(--border-active);
-      color: var(--text-primary);
-    }
-    
-    .filter-tag.active {
-      background: var(--accent-green);
-      color: #000;
-      border-color: var(--accent-green);
-      font-weight: 600;
-    }
-    
-    .filter-tag img {
-      border-radius: 1px;
-    }
-    
-    /* 全局统计 */
-    .global-stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 1px;
-      background: var(--border-color);
-      border: 1px solid var(--border-color);
-      border-radius: 4px;
-      overflow: hidden;
-      margin-bottom: 20px;
-    }
-    
-    .stat-item {
-      background: var(--bg-card);
-      padding: 14px 16px;
-      text-align: center;
-    }
-    
-    .stat-label {
-      font-size: 10px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 6px;
-    }
-    
-    .stat-main-value {
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--accent-cyan);
-      text-shadow: 0 0 8px rgba(57, 210, 192, 0.3);
-    }
-    
-    .stat-sub-info {
-      font-size: 11px;
-      color: var(--text-secondary);
-      margin-top: 4px;
-    }
-    
-    /* 视图面板 */
-    .view-panel {
-      display: none;
-    }
-    
-    .view-panel.active {
-      display: block;
-    }
-    
-    /* 分组标题 */
-    .group-section {
-      margin-bottom: 24px;
-    }
-    
-    .group-header {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--accent-green);
-      padding: 8px 0;
-      margin-bottom: 12px;
-      border-bottom: 1px solid var(--border-color);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .prompt-sign {
-      color: var(--text-muted);
-    }
-    
-    .group-count {
-      color: var(--text-muted);
-      font-weight: 400;
-      font-size: 11px;
-    }
-    
-    /* 服务器卡片网格 */
-    .servers-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-      gap: 12px;
-    }
-    
-    /* 服务器卡片 */
-    .server-card {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 4px;
-      padding: 16px;
-      text-decoration: none;
-      color: inherit;
-      transition: all 0.2s;
-      display: block;
-    }
-    
-    .server-card:hover {
-      border-color: var(--accent-cyan);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-      transform: translateY(-2px);
-    }
-    
-    .server-card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-    }
-    
-    .server-identity {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    
-    .status-indicator {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-    
-    .server-name {
-      font-weight: 600;
-      font-size: 13px;
-      color: var(--text-primary);
-    }
-    
-    .status-label {
-      font-size: 10px;
-      font-weight: 700;
-      padding: 2px 8px;
-      border: 1px solid;
-      border-radius: 3px;
-      letter-spacing: 1px;
-    }
-    
-    .server-meta {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 12px;
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-    
-    .card-meta {
-      display: flex;
-      gap: 12px;
-    }
-    
-    .card-badges {
-      display: flex;
-      gap: 4px;
-      flex-wrap: wrap;
-    }
-    
-    .badge {
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-size: 9px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .badge-bw { background: var(--accent-blue); color: #000; }
-    .badge-tf { background: var(--accent-green); color: #000; }
-    .badge-v4 { background: var(--accent-purple); color: #000; }
-    .badge-v6 { background: var(--accent-pink); color: #000; }
-    
-    /* 统计条 */
-    .server-stats {
-      margin-bottom: 12px;
-    }
-    
-    .stat-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 6px;
-    }
-    
-    .stat-key {
-      font-size: 10px;
-      color: var(--text-muted);
-      width: 35px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .stat-bar-container {
-      flex: 1;
-      height: 4px;
-      background: var(--border-color);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-    
-    .stat-bar-fill {
-      height: 100%;
-      border-radius: 2px;
-      transition: width 0.3s ease;
-    }
-    
-    .stat-value {
-      font-size: 11px;
-      color: var(--text-secondary);
-      min-width: 40px;
-      text-align: right;
-      font-weight: 600;
-    }
-    
-    .net-down { color: var(--accent-green); font-size: 10px; }
-    .net-up { color: var(--accent-blue); font-size: 10px; }
-    
-    /* Ping面板 */
-    .ping-panel {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 4px;
-      padding: 8px;
-      background: rgba(0, 0, 0, 0.2);
-      border-radius: 4px;
-      border: 1px solid var(--border-color);
-    }
-    
-    .ping-item {
-      text-align: center;
-    }
-    
-    .ping-label {
-      font-size: 9px;
-      color: var(--text-muted);
-      display: block;
-      margin-bottom: 2px;
-    }
-    
-    .ping-value {
-      font-size: 10px;
-      font-weight: 700;
-    }
-    
-    /* 表格视图 */
-    .table-container {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    
-    .terminal-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
-    
-    .terminal-table th {
-      background: var(--bg-card);
-      padding: 10px 12px;
-      text-align: left;
-      color: var(--text-muted);
-      font-weight: 600;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      border-bottom: 1px solid var(--border-color);
-    }
-    
-    .terminal-table td {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--border-color);
-      vertical-align: middle;
-    }
-    
-    .terminal-table tr:hover {
-      background: var(--bg-hover);
-    }
-    
-    .table-stat {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    
-    .os-label {
-      font-size: 11px;
-      color: var(--text-secondary);
-    }
-    
-    .update-time {
-      color: var(--text-muted);
-      font-size: 11px;
-    }
-    
-    /* 地图视图 */
-    .map-wrapper {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 4px;
-      padding: 4px;
-    }
-    
-    #map-container {
-      width: 100%;
-      height: 500px;
-      border-radius: 4px;
-      background: #1a1a2e;
-    }
-    
-    /* 空状态 */
-    .empty-state {
-      text-align: center;
-      color: var(--text-muted);
-      padding: 40px;
-      font-size: 13px;
-    }
-    
-    /* 滚动条 */
-    ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-    
-    ::-webkit-scrollbar-track {
-      background: var(--bg-primary);
-    }
-    
-    ::-webkit-scrollbar-thumb {
-      background: var(--border-color);
-      border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-      background: var(--border-active);
-    }
-    
-    /* 响应式 */
-    @media (max-width: 768px) {
-      .container { padding: 8px; }
-      .servers-grid { grid-template-columns: 1fr; }
-      .global-stats { grid-template-columns: 1fr; }
-      .ping-panel { grid-template-columns: repeat(2, 1fr); }
-    }
-    
+    ${baseStyles}
     ${themeStyles}
+    /* 页面专属样式 */
+    .leaflet-container { background: var(--surface) !important; }
+    body.dark .leaflet-tile { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.85); }
+    .leaflet-control-attribution { display: none !important; }
   </style>
 </head>
-<body class="${sys.theme || 'theme1'}">
-  <div class="container">
-    <!-- 终端顶部模拟 -->
-    <div class="terminal-header">
-      <div class="terminal-dots">
-        <span class="terminal-dot red"></span>
-        <span class="terminal-dot yellow"></span>
-        <span class="terminal-dot green"></span>
-      </div>
-      <div class="terminal-title">
-        dashboard — ${sys.site_title}
-      </div>
-      <div></div>
-    </div>
-    
-    <!-- 导航区域 -->
-    <div class="nav-area">
-      <div class="header-row">
-        <div class="site-title">$ ./${sys.site_title}</div>
-        <div class="controls-group">
-          <div class="view-toggle">
-            <button class="toggle-btn active" id="btn-card" onclick="switchView('card')">
-              ▣ CARDS
-            </button>
-            <button class="toggle-btn" id="btn-table" onclick="switchView('table')">
-              ≡ TABLE
-            </button>
-            <button class="toggle-btn" id="btn-map" onclick="switchView('map')">
-              ◉ MAP
-            </button>
-          </div>
-          <a href="/admin" class="admin-link">⚙ ${sys.admin_title}</a>
+<body class="${themeClass}" x-data="dashboard()" x-init="init()">
+
+  <!-- 顶部导航 -->
+  <header class="surface" style="border-bottom:1px solid var(--border); position:sticky; top:0; z-index:40; backdrop-filter:saturate(180%) blur(10px); background:color-mix(in srgb, var(--surface) 92%, transparent);">
+    <div class="container" style="height:56px; display:flex; align-items:center; gap:16px; position:relative;">
+      <a href="/" style="display:flex; align-items:center; gap:8px;">
+        <div style="width:28px; height:28px; border-radius:6px; background:var(--text); color:var(--bg); display:flex; align-items:center; justify-content:center;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         </div>
+        <div style="font-weight:600; font-size:15px; letter-spacing:-.01em;">${escapeHtml(sys.site_title)}</div>
+      </a>
+
+      <nav style="position:absolute; left:50%; transform:translateX(-50%);">
+        <div class="seg" x-ref="seg">
+          <div class="seg-indicator" :style="segStyle"></div>
+          <template x-for="(v, idx) in views" :key="v.id">
+            <button class="seg-item" :data-seg-idx="idx" :class="currentView === v.id ? 'active' : ''" @click="currentView = v.id" x-text="v.label"></button>
+          </template>
+        </div>
+      </nav>
+
+      <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+        <button @click="toggleTheme()" class="btn btn-ghost btn-icon" title="切换主题">
+          <template x-if="effectiveTheme === 'dark'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+          </template>
+          <template x-if="effectiveTheme !== 'dark'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </template>
+        </button>
+        <a href="/admin" class="btn btn-primary">管理后台</a>
       </div>
-      
-      <div class="filter-bar" id="ajax-filters">
-        ${filterTagsHtml}
+    </div>
+  </header>
+
+  <main class="container" style="padding-top:32px; padding-bottom:32px;">
+
+    <!-- 标题区 -->
+    <div style="display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:32px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h1 class="title-pop" style="font-size:24px; font-weight:600; letter-spacing:-.02em;">服务器Agent</h1>
+        <p class="text-2 title-pop" style="font-size:14px; margin-top:4px; animation-delay:.1s">实时监控所有服务器状态 · 共 ${results.length} 台</p>
+      </div>
+      <div class="title-pop" style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-3); animation-delay:.2s">
+        <span class="dot-pulse" style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>
+        <span>实时同步 · <span class="tabular-nums" x-text="liveSeconds + 's'"></span></span>
       </div>
     </div>
 
-    <!-- 全局统计 -->
-    <div class="global-stats" id="ajax-stats">
-      <div class="stat-item">
-        <div class="stat-label">Total Servers</div>
-        <div class="stat-main-value">${results.length}</div>
-        <div class="stat-sub-info">
-          <span style="color:var(--accent-green);">ON:${globalOnline}</span> | 
-          <span style="color:var(--accent-red);">OFF:${globalOffline}</span>
+    <!-- 概览卡 -->
+    <section class="stagger" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-bottom:32px;" id="summary-grid">
+      <div class="surface card-hover" style="border:1px solid var(--border); border-radius:8px; padding:16px;">
+        <div class="text-3" style="font-size:12px; margin-bottom:6px;">服务器总数</div>
+        <div style="font-size:24px; font-weight:600; letter-spacing:-.01em;" class="tabular-nums">${summary.total}</div>
+        <div class="text-2" style="font-size:12px; margin-top:4px;">
+          <span style="color:var(--green)">●</span> 在线 <b>${summary.online}</b>
+          ·
+          <span style="color:var(--red)">●</span> 离线 <b>${summary.offline}</b>
         </div>
       </div>
-      <div class="stat-item">
-        <div class="stat-label">
-          Total Traffic ${sys.auto_reset_traffic === 'true' ? '[MONTH]' : ''}
-        </div>
-        <div class="stat-main-value" style="font-size:16px;">${formatBytes(globalNetRx)} ↓ | ↑ ${formatBytes(globalNetTx)}</div>
+      <div class="surface card-hover" style="border:1px solid var(--border); border-radius:8px; padding:16px;">
+        <div class="text-3" style="font-size:12px; margin-bottom:6px;">实时网速</div>
+        <div style="font-size:24px; font-weight:600; letter-spacing:-.01em;" class="tabular-nums">↓ ${summary.speedIn}/s</div>
+        <div class="text-2" style="font-size:12px; margin-top:4px;">↑ ${summary.speedOut}/s</div>
       </div>
-      <div class="stat-item">
-        <div class="stat-label">Real-time Speed</div>
-        <div class="stat-main-value" style="font-size:16px;">
-          <span style="color:var(--accent-green);">↓ ${formatBytes(globalSpeedIn)}/s</span> | 
-          <span style="color:var(--accent-blue);">↑ ${formatBytes(globalSpeedOut)}/s</span>
-        </div>
+      <div class="surface card-hover" style="border:1px solid var(--border); border-radius:8px; padding:16px;">
+        <div class="text-3" style="font-size:12px; margin-bottom:6px;">${summary.isMonthly ? '本月流量' : '总流量'}</div>
+        <div style="font-size:24px; font-weight:600; letter-spacing:-.01em;" class="tabular-nums">↓ ${summary.trafficIn}</div>
+        <div class="text-2" style="font-size:12px; margin-top:4px;">↑ ${summary.trafficOut}</div>
       </div>
-    </div>
+      <div class="surface card-hover" style="border:1px solid var(--border); border-radius:8px; padding:16px;">
+        <div class="text-3" style="font-size:12px; margin-bottom:6px;">在线率</div>
+        <div style="font-size:24px; font-weight:600; letter-spacing:-.01em;" class="tabular-nums">${summary.total > 0 ? Math.round(summary.online / summary.total * 100) : 0}%</div>
+        <div class="text-2" style="font-size:12px; margin-top:4px;">${summary.online}/${summary.total} 节点上报中</div>
+      </div>
+    </section>
 
-    <!-- 卡片视图 -->
-    <div id="view-card" class="view-panel active">
-      <div id="ajax-cards">${cardContentHtml}</div>
-    </div>
+    <!-- 工具栏 -->
+    <section style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px;">
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <template x-for="s in statusFilters" :key="s.id">
+          <button class="chip" :class="statusFilter === s.id ? 'active' : ''" @click="statusFilter = s.id">
+            <template x-if="s.dotColor">
+              <span style="width:6px;height:6px;border-radius:50%;" :style="'background:' + s.dotColor"></span>
+            </template>
+            <span x-text="s.label"></span>
+          </button>
+        </template>
+      </div>
+      <div style="width:1px; height:20px; background:var(--border); margin:0 4px;"></div>
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <template x-for="f in filters" :key="f.code">
+          <button class="chip" :class="activeFilter === f.code ? 'active' : ''" @click="activeFilter = f.code">
+            <template x-if="f.code !== 'all'">
+              <img :src="'https://flagcdn.com/16x12/' + f.code.toLowerCase() + '.png'"
+                   :alt="f.code"
+                   loading="lazy"
+                   onerror="this.style.display='none'"
+                   style="border-radius:2px;" />
+            </template>
+            <span x-text="f.label"></span>
+            <span class="chip-count" x-text="f.count"></span>
+          </button>
+        </template>
+      </div>
+      <div style="margin-left:auto; position:relative;" x-data="{ open: false }" @click.outside="open=false">
+        <button class="btn btn-ghost" @click="open = !open">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+          <span style="font-size:13px;" x-text="sortOptions.find(o => o.id === sortBy)?.label"></span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="text-3"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div x-show="open" x-cloak class="surface" style="position:absolute; right:0; top:calc(100% + 4px); width:180px; border:1px solid var(--border); border-radius:8px; padding:4px; box-shadow:0 4px 16px rgba(0,0,0,.08); z-index:30;">
+          <template x-for="o in sortOptions" :key="o.id">
+            <button @click="sortBy = o.id; open = false" :class="sortBy === o.id ? 'text-primary' : 'text-2'"
+              style="width:100%; text-align:left; padding:6px 10px; border-radius:6px; font-size:13px; background:transparent; border:none; cursor:pointer; display:flex; justify-content:space-between; transition:background .2s;"
+              @mouseover="$event.target.style.background='var(--surface-2)'" @mouseout="$event.target.style.background='transparent'">
+              <span x-text="o.label"></span>
+              <span x-show="sortBy === o.id">✓</span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </section>
 
-    <!-- 表格视图 -->
-    <div id="view-table" class="view-panel">
-      <div class="table-container">
-        <table class="terminal-table">
+    <!-- ============ 卡片视图 ============ -->
+    <section x-show="currentView === 'cards'" x-cloak class="view-fade" :key="'cards-'+activeFilter+statusFilter+sortBy">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;" class="stagger">
+        <template x-for="s in filteredServers" :key="s.id">
+          <a :href="'/?id=' + s.id" class="surface card-hover" :class="!s.online ? 'card-offline' : ''" style="border:1px solid var(--border); border-radius:8px; padding:16px; display:block;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+              <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                <span style="width:6px;height:6px;border-radius:50%;flex-shrink:0;" :style="'background:' + (s.online ? 'var(--green)' : 'var(--red)')"></span>
+                <template x-if="s.country !== 'XX'">
+                  <img :src="'https://flagcdn.com/20x15/' + s.country.toLowerCase() + '.png'"
+                       loading="lazy"
+                       onerror="this.style.display='none'"
+                       style="border-radius:2px; flex-shrink:0;" />
+                </template>
+                <span style="font-weight:500; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="s.name"></span>
+              </div>
+              <span style="font-size:11px;" :style="'color:' + (s.online ? 'var(--text-3)' : 'var(--red)')"
+                    x-text="s.online ? (s.lastUpdate + 's') : ('离线 ' + formatDuration(s.offlineDuration))"></span>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span class="text-mono text-3" style="width:36px; font-size:10px; text-transform:uppercase;">CPU</span>
+                <div class="bar" style="flex:1;"><div :style="'width:'+s.cpu+'%; background:'+barColor(s.cpu)"></div></div>
+                <span class="tabular-nums" style="font-size:11px; width:38px; text-align:right;" x-text="s.cpu.toFixed(0)+'%'"></span>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span class="text-mono text-3" style="width:36px; font-size:10px; text-transform:uppercase;">RAM</span>
+                <div class="bar" style="flex:1;"><div :style="'width:'+s.ram+'%; background:'+barColor(s.ram)"></div></div>
+                <span class="tabular-nums" style="font-size:11px; width:38px; text-align:right;" x-text="s.ram.toFixed(0)+'%'"></span>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span class="text-mono text-3" style="width:36px; font-size:10px; text-transform:uppercase;">DISK</span>
+                <div class="bar" style="flex:1;"><div :style="'width:'+s.disk+'%; background:'+barColor(s.disk)"></div></div>
+                <span class="tabular-nums" style="font-size:11px; width:38px; text-align:right;" x-text="s.disk.toFixed(0)+'%'"></span>
+              </div>
+            </div>
+
+            <div class="text-mono text-2" style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:11px;">
+              <span>↓ <span class="tabular-nums" x-text="s.netInFmt"></span>/s</span>
+              <span>↑ <span class="tabular-nums" x-text="s.netOutFmt"></span>/s</span>
+              <span :style="'color:'+pingColor(s.pingCt)" x-text="s.pingCt + 'ms'"></span>
+            </div>
+          </a>
+        </template>
+      </div>
+      <div x-show="filteredServers.length === 0" class="text-3" style="text-align:center; padding:64px 0; font-size:14px;">
+        没有符合条件的服务器
+      </div>
+    </section>
+
+    <!-- ============ 列表视图 ============ -->
+    <section x-show="currentView === 'table'" x-cloak class="view-fade surface" style="border:1px solid var(--border); border-radius:8px; overflow:hidden;">
+      <div style="overflow-x:auto;">
+        <table class="tbl">
           <thead>
             <tr>
-              <th>STAT</th>
-              <th>HOSTNAME</th>
-              <th>REGION</th>
-              <th>ARCH/OS</th>
-              <th>CPU</th>
-              <th>RAM</th>
-              <th>DISK</th>
-              <th>↓ DL</th>
-              <th>↑ UL</th>
-              <th>↓ RX</th>
-              <th>↑ TX</th>
-              <th>UPDATE</th>
+              <th>名称</th>
+              <th>区域</th>
+              <th style="cursor:pointer;" @click="toggleSort('cpu')">CPU <span x-show="sortBy.startsWith('cpu')" x-text="sortBy.endsWith('asc')?'↑':'↓'"></span></th>
+              <th style="cursor:pointer;" @click="toggleSort('ram')">RAM <span x-show="sortBy.startsWith('ram')" x-text="sortBy.endsWith('asc')?'↑':'↓'"></span></th>
+              <th>磁盘</th>
+              <th>↓ 速度</th>
+              <th>↑ 速度</th>
+              <th>延迟</th>
+              <th>更新</th>
             </tr>
           </thead>
-          <tbody id="ajax-table">
-            ${tableBodyHtml || '<tr><td colspan="12" style="text-align:center; color:var(--text-muted);">[*] No data available</td></tr>'}
+          <tbody>
+            <template x-for="s in filteredServers" :key="s.id">
+              <tr style="cursor:pointer;" @click="window.location.href = '/?id=' + s.id">
+                <td>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="width:6px;height:6px;border-radius:50%;" :style="'background:'+(s.online?'var(--green)':'var(--red)')"></span>
+                    <span style="font-weight:500;" x-text="s.name"></span>
+                  </div>
+                </td>
+                <td class="text-2">
+                  <template x-if="s.country !== 'XX'">
+                    <span style="display:inline-flex;align-items:center;gap:6px;">
+                      <img :src="'https://flagcdn.com/20x15/' + s.country.toLowerCase() + '.png'"
+                           loading="lazy"
+                           onerror="this.style.display='none'"
+                           style="border-radius:2px;" />
+                      <span x-text="s.country"></span>
+                    </span>
+                  </template>
+                  <template x-if="s.country === 'XX'"><span>-</span></template>
+                </td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <div class="bar" style="width:64px;"><div :style="'width:'+s.cpu+'%; background:'+barColor(s.cpu)"></div></div>
+                    <span class="tabular-nums" style="font-size:12px;" x-text="s.cpu.toFixed(0)+'%'"></span>
+                  </div>
+                </td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <div class="bar" style="width:64px;"><div :style="'width:'+s.ram+'%; background:'+barColor(s.ram)"></div></div>
+                    <span class="tabular-nums" style="font-size:12px;" x-text="s.ram.toFixed(0)+'%'"></span>
+                  </div>
+                </td>
+                <td class="tabular-nums text-2" x-text="s.disk.toFixed(0)+'%'"></td>
+                <td class="text-mono text-2" style="font-size:12px;"><span x-text="s.netInFmt"></span>/s</td>
+                <td class="text-mono text-2" style="font-size:12px;"><span x-text="s.netOutFmt"></span>/s</td>
+                <td><span class="text-mono" style="font-size:12px;" :style="'color:'+pingColor(s.pingCt)" x-text="s.pingCt + 'ms'"></span></td>
+                <td class="text-3" style="font-size:12px;" x-text="s.lastUpdate + 's ago'"></td>
+              </tr>
+            </template>
+            <tr x-show="filteredServers.length === 0">
+              <td colspan="9" style="text-align:center; padding:48px 0;" class="text-3">没有符合条件的服务器</td>
+            </tr>
           </tbody>
         </table>
       </div>
-    </div>
+    </section>
 
-    <!-- 地图视图 -->
-    <div id="view-map" class="view-panel">
-      <div class="map-wrapper">
-        <div id="map-container"></div>
-      </div>
-    </div>
-    
+    <!-- ============ 地图视图（不带 scale 动画，避免 Leaflet 测量错误） ============ -->
+    <section x-show="currentView === 'map'" x-cloak class="surface" style="border:1px solid var(--border); border-radius:8px; padding:8px; overflow:hidden; animation: overlay-fade .4s var(--ease-out-expo);">
+      <div id="map" style="width:100%; height:560px; border-radius:6px; overflow:hidden;"></div>
+    </section>
+
     ${getFooterHtml()}
+  </main>
+
+  <div class="toast-stack">
+    <template x-for="t in toasts" :key="t.id">
+      <div class="toast"><span x-text="t.icon"></span><span x-text="t.msg"></span></div>
+    </template>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin=""></script>
+  <script id="server-data" type="application/json">${safeJsonInScript(clientServers)}</script>
   <script>
-    let mapInitialized = false;
-    let currentFilter = 'all';
+    function dashboard() {
+      const SERVERS = JSON.parse(document.getElementById('server-data').textContent);
+      const COORDS = ${safeJsonInScript(getCountryCoords())};
 
-    function switchView(viewName) {
-      document.querySelectorAll('.toggle-btn').forEach(btn => btn.classList.remove('active'));
-      document.getElementById('btn-' + viewName).classList.add('active');
-      document.querySelectorAll('.view-panel').forEach(panel => panel.classList.remove('active'));
-      document.getElementById('view-' + viewName).classList.add('active');
-      localStorage.setItem('monitor_preferred_view', viewName);
+      return {
+        theme: '${themeClass}',
+        currentView: localStorage.getItem('cf_view') || 'cards',
+        activeFilter: 'all',
+        statusFilter: 'all',
+        sortBy: localStorage.getItem('cf_sort') || 'cpu-desc',
+        servers: SERVERS,
+        toasts: [],
+        liveSeconds: 0,
+        segStyle: 'left:4px;width:0;',
+        _mapInited: false,
+        _map: null,
 
-      if (viewName === 'map' && !mapInitialized) {
-        initMap();
-        mapInitialized = true;
-      } else if (viewName === 'map' && window.myMap) {
-        setTimeout(() => window.myMap.invalidateSize(), 100);
-      }
-    }
+        views: [
+          { id: 'cards', label: '卡片' },
+          { id: 'table', label: '列表' },
+          { id: 'map',   label: '地图' },
+        ],
+        statusFilters: [
+          { id: 'all', label: '全部' },
+          { id: 'online',  label: '在线', dotColor: 'var(--green)' },
+          { id: 'offline', label: '离线', dotColor: 'var(--red)' },
+        ],
+        sortOptions: [
+          { id: 'cpu-desc',  label: 'CPU 高→低' },
+          { id: 'cpu-asc',   label: 'CPU 低→高' },
+          { id: 'ram-desc',  label: 'RAM 高→低' },
+          { id: 'ram-asc',   label: 'RAM 低→高' },
+          { id: 'name-asc',  label: '名称 A→Z' },
+        ],
 
-    // 国家过滤器
-    document.querySelectorAll('.filter-tag').forEach(tag => {
-      tag.addEventListener('click', function() {
-        document.querySelectorAll('.filter-tag').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        currentFilter = this.dataset.filter;
-        applyFilter();
-      });
-    });
-
-    function applyFilter() {
-      const cards = document.querySelectorAll('.server-card');
-      const rows = document.querySelectorAll('#ajax-table tr');
-      
-      cards.forEach(card => {
-        const country = card.dataset.country;
-        card.style.display = (currentFilter === 'all' || country === currentFilter) ? '' : 'none';
-      });
-      
-      rows.forEach(row => {
-        const country = row.dataset.country;
-        if (country !== undefined) {
-          row.style.display = (currentFilter === 'all' || country === currentFilter) ? '' : 'none';
-        }
-      });
-      
-      // 隐藏空分组
-      document.querySelectorAll('.group-section').forEach(section => {
-        const visibleCards = section.querySelectorAll('.server-card:not([style*="display: none"])');
-        section.style.display = visibleCards.length === 0 ? 'none' : '';
-      });
-    }
-
-    // 地图初始化
-    const countryCoords = {
-      'US': [37.09, -95.71], 'CN': [35.86, 104.19], 'JP': [36.20, 138.25], 'HK': [22.31, 114.16],
-      'SG': [1.35, 103.81], 'KR': [35.90, 127.76], 'DE': [51.16, 10.45], 'GB': [55.37, -3.43],
-      'NL': [52.13, 5.29], 'FR': [46.22, 2.21], 'CA': [56.13, -106.34], 'AU': [-25.27, 133.77],
-      'IN': [20.59, 78.96], 'BR': [-14.23, -51.92], 'RU': [61.52, 105.31], 'ZA': [-30.55, 22.93],
-      'TW': [23.69, 120.96], 'IT': [41.87, 12.56], 'SE': [60.12, 18.64], 'CH': [46.81, 8.22],
-      'ES': [40.46, -3.74], 'PL': [51.91, 19.14], 'FI': [61.92, 25.74], 'NO': [60.47, 8.46],
-      'DK': [56.26, 9.50], 'IE': [53.14, -7.69], 'AT': [47.51, 14.55], 'TR': [38.96, 35.24],
-      'AE': [23.42, 53.84], 'MY': [4.21, 101.97], 'TH': [15.87, 100.99], 'VN': [14.05, 108.27],
-      'PH': [12.87, 121.77], 'ID': [-0.78, 113.92]
-    };
-
-    const iso2To3 = {
-      "US":"USA","CN":"CHN","JP":"JPN","HK":"HKG","SG":"SGP","KR":"KOR","DE":"DEU","GB":"GBR",
-      "NL":"NLD","FR":"FRA","CA":"CAN","AU":"AUS","IN":"IND","BR":"BRA","RU":"RUS","ZA":"ZAF",
-      "TW":"TWN","IT":"ITA","SE":"SWE","CH":"CHE","ES":"ESP","PL":"POL","FI":"FIN","NO":"NOR",
-      "DK":"DNK","IE":"IRL","AT":"AUT","TR":"TUR","AE":"ARE","MY":"MYS","TH":"THA","VN":"VNM",
-      "PH":"PHL","ID":"IDN"
-    };
-
-    let markersLayer, geoJsonLayer, worldGeoJson = null, currentMapDataStr = "";
-
-    async function initMap() {
-      window.myMap = L.map('map-container', {
-        zoomControl: false,
-        attributionControl: false,
-        minZoom: 1
-      }).setView([30, 10], 2);
-
-      // 添加终端风格的缩放控制
-      L.control.zoom({
-        position: 'bottomright'
-      }).addTo(window.myMap);
-
-      try {
-        const res = await fetch('https://cdn.jsdelivr.net/gh/johan/world.geo.json@master/countries.geo.json');
-        worldGeoJson = await res.json();
-        drawMarkers();
-      } catch (e) {
-        console.error("[ERROR] Map load failed", e);
-      }
-    }
-
-    function drawMarkers() {
-      if(!window.myMap || !worldGeoJson) return;
-
-      const newDataStr = document.getElementById('map-data').textContent;
-      if (currentMapDataStr === newDataStr) return;
-      currentMapDataStr = newDataStr;
-
-      if(geoJsonLayer) window.myMap.removeLayer(geoJsonLayer);
-      if(markersLayer) markersLayer.clearLayers();
-      else markersLayer = L.layerGroup().addTo(window.myMap);
-
-      const data = JSON.parse(newDataStr);
-      const isDark = true; // Terminal风格始终为暗色
-
-      const activeIso3 = {};
-      for (const code in data) {
-        if (iso2To3[code]) activeIso3[iso2To3[code]] = true;
-      }
-
-      geoJsonLayer = L.geoJSON(worldGeoJson, {
-        style: function(feature) {
-          const isActive = activeIso3[feature.id];
-          return {
-            fillColor: isActive ? '#00d4aa' : '#1e2a3a',
-            weight: 1,
-            opacity: 0.8,
-            color: '#0a0e14',
-            fillOpacity: isActive ? 0.4 : 0.2
-          };
-        }
-      }).addTo(window.myMap);
-
-      for (const [code, count] of Object.entries(data)) {
-        if(countryCoords[code]) {
-          const icon = L.divIcon({ 
-            className: 'custom-map-marker', 
-            html: '<div style="background:#00d4aa; color:#000; border-radius:50%; width:22px; height:22px; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:bold; border:2px solid #0a0e14; box-shadow:0 0 10px rgba(0,212,170,0.5); font-family:JetBrains Mono,monospace;">' + count + '</div>', 
-            iconSize: [22,22] 
+        get effectiveTheme() {
+          if (this.theme === 'dark') return 'dark';
+          if (this.theme === 'light') return 'light';
+          return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        },
+        get filters() {
+          const map = {};
+          for (const s of this.servers) if (s.country !== 'XX') map[s.country] = (map[s.country] || 0) + 1;
+          const arr = [{ code: 'all', label: '全部', count: this.servers.length }];
+          Object.entries(map).sort().forEach(([c,n]) => arr.push({ code: c, label: c, count: n }));
+          return arr;
+        },
+        get filteredServers() {
+          let arr = this.servers.slice();
+          if (this.activeFilter !== 'all') arr = arr.filter(s => s.country === this.activeFilter.toUpperCase());
+          if (this.statusFilter === 'online')  arr = arr.filter(s => s.online);
+          if (this.statusFilter === 'offline') arr = arr.filter(s => !s.online);
+          const [field, dir] = this.sortBy.split('-');
+          arr.sort((a,b) => {
+            const av = a[field], bv = b[field];
+            if (typeof av === 'string') return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+            return dir === 'asc' ? av - bv : bv - av;
           });
-          L.marker(countryCoords[code], {icon: icon}).addTo(markersLayer);
+          return arr;
+        },
+
+        barColor(v) { if (v < 60) return 'var(--text-3)'; if (v < 85) return 'var(--amber)'; return 'var(--red)'; },
+        pingColor(v) { if (v === 0) return 'var(--text-3)'; if (v < 100) return 'var(--green)'; if (v < 200) return 'var(--amber)'; return 'var(--red)'; },
+        formatDuration(sec) {
+          if (sec < 60) return sec + 's';
+          if (sec < 3600) return Math.floor(sec / 60) + 'm';
+          if (sec < 86400) return Math.floor(sec / 3600) + 'h';
+          return Math.floor(sec / 86400) + 'd';
+        },
+        toggleSort(field) { this.sortBy = (this.sortBy === field+'-desc') ? field+'-asc' : field+'-desc'; },
+        toggleTheme() {
+          const next = this.effectiveTheme === 'dark' ? 'light' : 'dark';
+          this.theme = next;
+          document.body.classList.remove('dark','light','auto');
+          document.body.classList.add(next);
+          localStorage.setItem('cf_theme', next);
+        },
+        toast(msg, icon='✓') {
+          const id = Date.now() + Math.random();
+          this.toasts.push({ id, msg, icon });
+          setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 2000);
+        },
+        updateSeg() {
+          const seg = this.$refs.seg;
+          if (!seg) return;
+          const idx = this.views.findIndex(v => v.id === this.currentView);
+          const target = seg.querySelector('[data-seg-idx="'+idx+'"]');
+          if (!target) return;
+          this.segStyle = 'left:'+target.offsetLeft+'px;width:'+target.offsetWidth+'px;';
+        },
+        initMap() {
+          if (this._mapInited) {
+            // 已初始化：等动画结束后重新计算尺寸
+            setTimeout(() => this._map && this._map.invalidateSize(true), 750);
+            return;
+          }
+          this._mapInited = true;
+          // 等 view-fade 动画完成后再初始化（动画 700ms）
+          setTimeout(() => {
+            const mapEl = document.getElementById('map');
+            if (!mapEl) { this._mapInited = false; return; }
+            this._map = L.map('map', { zoomControl: true, attributionControl: false, worldCopyJump: false }).setView([20, 30], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { noWrap: true }).addTo(this._map);
+            for (const s of this.servers) {
+              const c = COORDS[s.country];
+              if (!c) continue;
+              const color = s.online ? '#22c55e' : '#ef4444';
+              const html = '<div style="width:10px;height:10px;border-radius:50%;background:'+color+';border:2px solid #fff;box-shadow:0 0 0 1px '+color+'"></div>';
+              L.marker(c, { icon: L.divIcon({ html, className:'', iconSize:[10,10] }) })
+                .addTo(this._map)
+                .bindPopup('<b>'+s.name+'</b><br/>'+s.country+' · '+(s.online?'在线':'离线'));
+            }
+            // 多次 invalidateSize 确保正确（动画期间可能尺寸还在变）
+            this._map.invalidateSize(true);
+            setTimeout(() => this._map && this._map.invalidateSize(true), 200);
+            setTimeout(() => this._map && this._map.invalidateSize(true), 800);
+          }, 750);
+        },
+
+        init() {
+          // 加载本地保存的主题
+          const savedTheme = localStorage.getItem('cf_theme');
+          if (savedTheme) {
+            this.theme = savedTheme;
+            document.body.classList.remove('dark','light','auto');
+            document.body.classList.add(savedTheme);
+          }
+
+          this.$watch('currentView', (v) => {
+            localStorage.setItem('cf_view', v);
+            this.$nextTick(() => this.updateSeg());
+            if (v === 'map') this.$nextTick(() => this.initMap());
+          });
+          this.$watch('sortBy', (v) => localStorage.setItem('cf_sort', v));
+          this.$nextTick(() => this.updateSeg());
+          window.addEventListener('resize', () => this.updateSeg());
+
+          setInterval(() => { this.liveSeconds = (this.liveSeconds + 1) % 60; }, 1000);
+
+          // 每 30 秒拉取最新数据
+          setInterval(() => this.refresh(), 30000);
+        },
+
+        async refresh() {
+          try {
+            const res = await fetch('/api/dashboard', { credentials: 'include' });
+            if (!res.ok) return;
+            const j = await res.json();
+            if (!j || !Array.isArray(j.servers)) return;
+            // 原地更新：按 id 找到旧对象并替换属性，新增/删除才动数组
+            const oldMap = new Map(this.servers.map(s => [s.id, s]));
+            const newIds = new Set(j.servers.map(s => s.id));
+            // 更新或追加
+            for (const ns of j.servers) {
+              const old = oldMap.get(ns.id);
+              if (old) {
+                Object.assign(old, ns);
+              } else {
+                this.servers.push(ns);
+              }
+            }
+            // 移除已删除的
+            for (let i = this.servers.length - 1; i >= 0; i--) {
+              if (!newIds.has(this.servers[i].id)) this.servers.splice(i, 1);
+            }
+          } catch (e) {}
         }
-      }
+      };
     }
-
-    // 恢复上次视图
-    document.addEventListener('DOMContentLoaded', () => {
-      const savedView = localStorage.getItem('monitor_preferred_view') || 'card';
-      switchView(savedView);
-    });
-
-    // AJAX 自动刷新
-    setInterval(async () => {
-      try {
-        const res = await fetch(location.href);
-        const htmlText = await res.text();
-        const parser = new DOMParser();
-        const newDoc = parser.parseFromString(htmlText, 'text/html');
-        
-        document.getElementById('ajax-stats').innerHTML = newDoc.getElementById('ajax-stats').innerHTML;
-        document.getElementById('ajax-cards').innerHTML = newDoc.getElementById('ajax-cards').innerHTML;
-        document.getElementById('ajax-table').innerHTML = newDoc.getElementById('ajax-table').innerHTML;
-        document.getElementById('ajax-filters').innerHTML = newDoc.getElementById('ajax-filters').innerHTML;
-        document.getElementById('map-data').textContent = newDoc.getElementById('map-data').textContent;
-        
-        applyFilter();
-        drawMarkers();
-      } catch (e) {
-        console.log('[INFO] Refresh pending...');
-      }
-    }, 60000);
   </script>
+
   ${sys.custom_script || ''}
 </body>
 </html>`;
 
-  return new Response(html, { 
-    headers: { 'Content-Type': 'text/html;charset=UTF-8' } 
-  });
+  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
 }
 
-export { handleServerDetail };
+// 简单 HTML 转义防 XSS - 已迁移至 utils/sanitize.js
+
+function getCountryCoords() {
+  return {
+    HK:[22.3,114.1], SG:[1.35,103.8], JP:[35.7,139.7], KR:[37.5,127.0],
+    US:[37.7,-95.7], CA:[56.1,-106.3], MX:[23.6,-102.5], BR:[-14.2,-51.9],
+    DE:[51.1,10.4], FR:[46.6,1.8], GB:[55.4,-3.4], NL:[52.1,5.3], IT:[41.9,12.6], ES:[40.5,-3.7],
+    RU:[61.5,105.3], IN:[20.6,79.0], AU:[-25.3,133.8], NZ:[-41.0,174.0],
+    CN:[35.8,104.2], TW:[23.7,121.0], TH:[15.9,100.9], VN:[14.1,108.3], MY:[4.2,101.9], ID:[-0.8,113.9], PH:[13.4,122.6],
+    AE:[23.4,53.8], TR:[38.9,35.2], SA:[23.9,45.1], ZA:[-30.6,22.9], EG:[26.8,30.8],
+    AR:[-38.4,-63.6], CL:[-35.7,-71.5], CO:[4.6,-74.3], PE:[-9.2,-75.0],
+    SE:[60.1,18.6], NO:[60.5,8.5], FI:[61.9,25.7], DK:[56.3,9.5], CH:[46.8,8.2], AT:[47.5,14.6],
+    PL:[51.9,19.1], CZ:[49.8,15.5], RO:[45.9,24.9], UA:[48.4,31.2], BE:[50.5,4.5], IE:[53.1,-7.7], PT:[39.4,-8.2],
+  };
+}

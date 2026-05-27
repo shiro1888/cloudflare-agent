@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理后台 · cloudflare-agent</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E⚙%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #ffffff;
+      --surface-2: #fafafa;
+      --border: #ececec;
+      --border-strong: #d4d4d4;
+      --text: #171717;
+      --text-2: #737373;
+      --text-3: #a3a3a3;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --blue: #2563eb;
+      --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .dark {
+      --bg: #0a0a0a;
+      --surface: #0f0f0f;
+      --surface-2: #161616;
+      --border: #1f1f1f;
+      --border-strong: #2a2a2a;
+      --text: #f5f5f5;
+      --text-2: #a3a3a3;
+      --text-3: #737373;
+      --green: #22c55e;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --blue: #3b82f6;
+    }
+    html, body {
+      font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    [x-cloak] { display: none !important; }
+
+    .surface { background: var(--surface); border-color: var(--border); }
+    .border-soft { border-color: var(--border); }
+    .text-2 { color: var(--text-2); }
+    .text-3 { color: var(--text-3); }
+    .hover-bg:hover { background: var(--surface-2); }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+    /* 按钮 */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      height: 32px; padding: 0 12px;
+      border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text);
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: background .35s var(--ease-out-expo), border-color .35s var(--ease-out-expo), opacity .35s var(--ease-out-expo);
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--surface-2); border-color: var(--border-strong); }
+    .btn:active { opacity: .8; }
+    .btn-primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .btn-primary:hover { opacity: .9; }
+    .btn-ghost { border-color: transparent; background: transparent; }
+    .btn-ghost:hover { background: var(--surface-2); }
+    .btn-danger { color: var(--red); }
+    .btn-danger:hover { background: rgba(220,38,38,.06); border-color: rgba(220,38,38,.4); }
+    .btn-icon { width: 32px; padding: 0; }
+
+    /* 输入 */
+    .input {
+      height: 32px; padding: 0 10px;
+      border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text);
+      font-size: 13px; outline: none;
+      transition: border-color .25s var(--ease-out-expo), box-shadow .25s var(--ease-out-expo);
+      width: 100%;
+    }
+    .input:focus {
+      border-color: var(--text);
+      box-shadow: 0 0 0 3px rgba(0,0,0,.04);
+    }
+    .dark .input:focus { box-shadow: 0 0 0 3px rgba(255,255,255,.06); }
+    .input::placeholder { color: var(--text-3); }
+    textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vertical; }
+    select.input { padding-right: 28px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; background-size: 14px; }
+
+    /* 标签切换 - segmented */
+    .seg { position: relative; display: inline-flex; gap: 4px; padding: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
+    .seg-item {
+      position: relative; z-index: 2; padding: 6px 22px;
+      font-size: 13px; font-weight: 500; color: var(--text-2);
+      cursor: pointer; transition: color .4s var(--ease-out-expo);
+      background: transparent; border: none; border-radius: 7px; white-space: nowrap;
+    }
+    .seg-item:hover { color: var(--text); }
+    .seg-item.active { color: var(--text); font-weight: 600; }
+    .seg-indicator {
+      position: absolute; top: 4px; bottom: 4px;
+      background: var(--surface); border-radius: 7px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 0 0 1px var(--border);
+      transition: left .65s var(--ease-out-expo), width .65s var(--ease-out-expo);
+      z-index: 1; pointer-events: none;
+    }
+    .dark .seg-indicator { box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 0 0 1px var(--border-strong); }
+
+    /* 表格 */
+    .tbl { width: 100%; font-size: 13px; }
+    .tbl th {
+      text-align: left; padding: 10px 16px;
+      font-size: 11px; font-weight: 500; letter-spacing: .02em;
+      color: var(--text-3); text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+    .tbl td { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .tbl tbody tr { transition: background .35s var(--ease-out-expo); }
+    .tbl tbody tr:hover { background: var(--surface-2); }
+    .tbl tbody tr:last-child td { border-bottom: 0; }
+
+    /* Toast */
+    .toast-stack { position: fixed; bottom: 16px; right: 16px; z-index: 70; display: flex; flex-direction: column; gap: 8px; }
+    .toast {
+      background: var(--text); color: var(--bg);
+      padding: 10px 14px; border-radius: 8px;
+      font-size: 13px; font-weight: 500;
+      display: flex; align-items: center; gap: 8px;
+      min-width: 200px; max-width: 320px;
+      box-shadow: 0 4px 12px rgba(0,0,0,.15);
+      animation: toast-glide .5s var(--ease-out-expo);
+    }
+    @keyframes toast-glide {
+      0%   { opacity: 0; transform: translateY(16px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    .kbd {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 18px; height: 18px; padding: 0 5px;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: var(--surface-2);
+      font-size: 11px; font-family: 'JetBrains Mono', monospace;
+      color: var(--text-2);
+    }
+
+    /* 入场动画 */
+    .stagger > * {
+      opacity: 0;
+      transform: translateY(12px);
+      animation: fade-rise .9s var(--ease-out-expo) forwards;
+    }
+    .stagger > *:nth-child(1) { animation-delay: .04s; }
+    .stagger > *:nth-child(2) { animation-delay: .08s; }
+    .stagger > *:nth-child(3) { animation-delay: .12s; }
+    .stagger > *:nth-child(4) { animation-delay: .16s; }
+    .stagger > *:nth-child(5) { animation-delay: .2s; }
+    .stagger > *:nth-child(6) { animation-delay: .24s; }
+    .stagger > *:nth-child(7) { animation-delay: .28s; }
+    .stagger > *:nth-child(8) { animation-delay: .32s; }
+    .stagger > *:nth-child(9) { animation-delay: .36s; }
+    .stagger > *:nth-child(10) { animation-delay: .4s; }
+    @keyframes fade-rise { to { opacity: 1; transform: translateY(0); } }
+
+    .view-fade { animation: view-glide .7s var(--ease-out-expo); }
+    @keyframes view-glide {
+      0%   { opacity: 0; transform: scale(.985) translateY(8px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    /* Modal */
+    .pop-in { animation: modal-fade .45s var(--ease-out-expo); }
+    @keyframes modal-fade {
+      0%   { opacity: 0; transform: scale(.96); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    .overlay-fade { animation: overlay-fade .4s var(--ease-out-expo); }
+    @keyframes overlay-fade { from { opacity: 0; } to { opacity: 1; } }
+
+    .title-pop {
+      opacity: 0;
+      transform: translateY(16px);
+      animation: fade-rise 1s var(--ease-out-expo) forwards;
+    }
+
+    /* 状态点 */
+    .dot-pulse { animation: dot-breathe 3s var(--ease-out-expo) infinite; }
+    @keyframes dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+    /* 标签 */
+    .tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      height: 22px; padding: 0 8px; border-radius: 5px;
+      font-size: 11px; font-weight: 500;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+    }
+    .tag-online { color: var(--green); border-color: rgba(22,163,74,.25); background: rgba(22,163,74,.06); }
+    .tag-offline { color: var(--red); border-color: rgba(220,38,38,.25); background: rgba(220,38,38,.06); }
+
+    /* 命令片段 */
+    .code-block {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      overflow-x: auto;
+      white-space: nowrap;
+      color: var(--text-2);
+    }
+
+    /* 复选框 */
+    .checkbox-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      cursor: pointer;
+      transition: border-color .25s var(--ease-out-expo), background .25s var(--ease-out-expo);
+    }
+    .checkbox-row:hover { border-color: var(--border-strong); background: var(--surface-2); }
+    .checkbox-row input { accent-color: var(--text); }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body x-data="admin()" x-init="init()" :class="theme === 'dark' ? 'dark' : ''">
+
+  <!-- 顶部导航 -->
+  <header class="surface border-b border-soft sticky top-0 z-40">
+    <div class="max-w-[1280px] mx-auto px-6 h-14 flex items-center gap-4 relative">
+      <a href="index.html" class="flex items-center gap-2 flex-shrink-0">
+        <div class="w-7 h-7 rounded-md flex items-center justify-center" style="background:var(--text);color:var(--bg)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div class="font-semibold text-[15px] tracking-tight hidden sm:block">cloudflare-agent</div>
+        <span class="text-3 text-[13px] mx-1">/</span>
+        <span class="font-medium text-[14px]">管理后台</span>
+      </a>
+
+      <!-- Tab 切换 -->
+      <nav class="md:absolute md:left-1/2 md:-translate-x-1/2">
+        <div class="seg" x-ref="seg">
+          <div class="seg-indicator" :style="segStyle"></div>
+          <template x-for="(t, idx) in tabs" :key="t.id">
+            <button class="seg-item" :data-seg-idx="idx" :class="currentTab === t.id ? 'active' : ''" @click="currentTab = t.id" x-text="t.label"></button>
+          </template>
+        </div>
+      </nav>
+
+      <div class="ml-auto flex items-center gap-2">
+        <button @click="theme = theme === 'dark' ? 'light' : 'dark'" class="btn btn-ghost btn-icon" :title="theme === 'dark' ? '浅色' : '深色'">
+          <template x-if="theme === 'dark'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+          </template>
+          <template x-if="theme !== 'dark'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </template>
+        </button>
+        <a href="index.html" class="btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3"/></svg>
+          <span class="hidden sm:inline">前台</span>
+        </a>
+        <button @click="logout()" class="btn btn-primary">退出登录</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主内容 -->
+  <main class="max-w-[1280px] mx-auto px-6 py-8">
+
+    <!-- 页面标题 -->
+    <div class="flex items-end justify-between mb-8 flex-wrap gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight title-pop">管理控制台</h1>
+        <p class="text-2 text-sm mt-1 title-pop" style="animation-delay:.1s">添加、配置和管理服务器探针</p>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-3 title-pop" style="animation-delay:.2s">
+        <span class="w-1.5 h-1.5 rounded-full dot-pulse" style="background:var(--green)"></span>
+        <span>已登录 · admin</span>
+      </div>
+    </div>
+
+    <!-- 统计概览 -->
+    <section class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8 stagger">
+      <div class="surface border border-soft rounded-lg p-4">
+        <div class="text-xs text-3 mb-1.5">服务器总数</div>
+        <div class="text-2xl font-semibold tracking-tight tabular-nums" x-text="servers.length"></div>
+        <div class="text-2 text-xs mt-1">点击下方"添加"创建新服务器</div>
+      </div>
+      <div class="surface border border-soft rounded-lg p-4">
+        <div class="text-xs text-3 mb-1.5">在线</div>
+        <div class="text-2xl font-semibold tracking-tight tabular-nums" style="color:var(--green)" x-text="onlineCount"></div>
+        <div class="text-2 text-xs mt-1">最近 5 分钟有上报</div>
+      </div>
+      <div class="surface border border-soft rounded-lg p-4">
+        <div class="text-xs text-3 mb-1.5">离线</div>
+        <div class="text-2xl font-semibold tracking-tight tabular-nums" style="color:var(--red)" x-text="servers.length - onlineCount"></div>
+        <div class="text-2 text-xs mt-1">超过 5 分钟无上报</div>
+      </div>
+      <div class="surface border border-soft rounded-lg p-4">
+        <div class="text-xs text-3 mb-1.5">数据库存储</div>
+        <div class="text-2xl font-semibold tracking-tight tabular-nums">142<span class="text-base text-2 font-normal ml-1">MB</span></div>
+        <div class="text-2 text-xs mt-1">D1 免费额度 5 GB</div>
+      </div>
+    </section>
+
+    <!-- ========================== 服务器管理 ========================== -->
+    <section x-show="currentTab === 'servers'" x-cloak class="view-fade" :key="'servers'+reload">
+      <!-- 工具栏 -->
+      <div class="flex items-center gap-2 mb-4 flex-wrap">
+        <input x-model="newName" @keydown.enter="addServer()" type="text" class="input" placeholder="输入服务器名称..." style="width:240px;" />
+        <select x-model="newGroup" class="input" style="width:140px">
+          <option value="Default">默认分组</option>
+          <option value="亚太">亚太</option>
+          <option value="欧美">欧美</option>
+          <option value="国内">国内</option>
+        </select>
+        <button @click="addServer()" class="btn btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          添加
+        </button>
+
+        <div class="ml-auto flex items-center gap-2">
+          <input x-model="search" type="text" class="input" placeholder="搜索..." style="width:200px" />
+          <button @click="batchDelete()" class="btn btn-danger" :disabled="selected.length === 0" :style="selected.length === 0 ? 'opacity:.4;cursor:not-allowed' : ''">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 01-2 2H9a2 2 0 01-2-2L5 6"/></svg>
+            <span x-text="selected.length > 0 ? `删除 (${selected.length})` : '批量删除'"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 服务器表格 -->
+      <div class="surface border border-soft rounded-lg overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th style="width:40px"><input type="checkbox" :checked="selected.length === filteredServers.length && filteredServers.length > 0" @change="toggleAll" /></th>
+                <th>名称</th>
+                <th>分组</th>
+                <th>价格</th>
+                <th>到期</th>
+                <th>状态</th>
+                <th>安装命令</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="s in filteredServers" :key="s.id">
+                <tr>
+                  <td><input type="checkbox" :value="s.id" :checked="selected.includes(s.id)" @change="toggleSelect(s.id)" /></td>
+                  <td>
+                    <div class="font-medium" x-text="s.name"></div>
+                    <div class="text-3 text-[11px] font-mono" x-text="s.id"></div>
+                  </td>
+                  <td><span class="tag" x-text="s.group"></span></td>
+                  <td class="text-2" x-text="s.price || '-'"></td>
+                  <td class="text-2" x-text="s.expire || '永久'"></td>
+                  <td>
+                    <span class="tag" :class="s.online ? 'tag-online' : 'tag-offline'">
+                      <span class="w-1.5 h-1.5 rounded-full" :style="`background:${s.online ? 'var(--green)' : 'var(--red)'}`"></span>
+                      <span x-text="s.online ? '在线' : '离线'"></span>
+                    </span>
+                  </td>
+                  <td>
+                    <button @click="copyCmd(s)" class="btn btn-ghost" style="height:26px;padding:0 8px;font-size:12px">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                      <span>复制命令</span>
+                    </button>
+                  </td>
+                  <td>
+                    <div class="flex items-center gap-1">
+                      <button @click="editServer(s)" class="btn btn-ghost btn-icon" title="编辑">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
+                      <button @click="deleteServer(s)" class="btn btn-ghost btn-icon btn-danger" title="删除">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 01-2 2H9a2 2 0 01-2-2L5 6M10 11v6M14 11v6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="filteredServers.length === 0">
+                <td colspan="8" class="text-center py-12 text-3">没有服务器，点击上方"添加"创建一个</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================== 系统设置 ========================== -->
+    <section x-show="currentTab === 'settings'" x-cloak class="view-fade" :key="'settings'+reload">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 stagger">
+        <!-- 站点配置 -->
+        <div class="surface border border-soft rounded-lg p-5">
+          <h3 class="text-sm font-semibold mb-4 flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33"/></svg>
+            站点配置
+          </h3>
+          <div class="space-y-4">
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">站点标题</label>
+              <input x-model="settings.siteTitle" type="text" class="input" />
+            </div>
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">主题</label>
+              <select x-model="settings.theme" class="input">
+                <option value="auto">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">自定义 CSS</label>
+              <textarea x-model="settings.customCss" rows="4" class="input font-mono text-[12px]" placeholder="/* 你的自定义样式 */"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- 显示选项 -->
+        <div class="surface border border-soft rounded-lg p-5">
+          <h3 class="text-sm font-semibold mb-4 flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            显示选项
+          </h3>
+          <div class="space-y-2">
+            <label class="checkbox-row">
+              <input type="checkbox" x-model="settings.showPrice" />
+              <div class="flex-1">
+                <div class="text-[13px] font-medium">显示价格</div>
+                <div class="text-3 text-xs">在卡片上显示服务器价格</div>
+              </div>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" x-model="settings.showExpire" />
+              <div class="flex-1">
+                <div class="text-[13px] font-medium">显示到期时间</div>
+                <div class="text-3 text-xs">倒计时显示</div>
+              </div>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" x-model="settings.showBw" />
+              <div class="flex-1">
+                <div class="text-[13px] font-medium">显示带宽</div>
+                <div class="text-3 text-xs">显示带宽规格徽章</div>
+              </div>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" x-model="settings.isPublic" />
+              <div class="flex-1">
+                <div class="text-[13px] font-medium">公开访问</div>
+                <div class="text-3 text-xs">关闭后前台需要密码</div>
+              </div>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" x-model="settings.autoResetTraffic" />
+              <div class="flex-1">
+                <div class="text-[13px] font-medium">每月自动重置流量</div>
+                <div class="text-3 text-xs">每月 1 日 0 点重置流量统计</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 通知配置 -->
+        <div class="surface border border-soft rounded-lg p-5 lg:col-span-2">
+          <h3 class="text-sm font-semibold mb-4 flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+            离线告警
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">通知方式</label>
+              <select x-model="settings.notifyType" class="input">
+                <option value="off">关闭</option>
+                <option value="telegram">Telegram</option>
+                <option value="wechat">企业微信</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">触发条件</label>
+              <select x-model="settings.notifyAfter" class="input">
+                <option value="60">离线 1 分钟</option>
+                <option value="300">离线 5 分钟</option>
+                <option value="600">离线 10 分钟</option>
+              </select>
+            </div>
+            <div class="md:col-span-2">
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">Bot Token / Webhook URL</label>
+              <input x-model="settings.botToken" type="text" class="input font-mono text-[12px]" placeholder="bot123456:ABC-DEF... 或 https://qyapi.weixin.qq.com/..." />
+            </div>
+            <div class="md:col-span-2">
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">Chat ID（仅 Telegram）</label>
+              <input x-model="settings.chatId" type="text" class="input font-mono text-[12px]" placeholder="-100123456789" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 保存按钮 -->
+        <div class="lg:col-span-2 flex justify-end gap-2">
+          <button @click="resetSettings()" class="btn">恢复默认</button>
+          <button @click="saveSettings()" class="btn btn-primary">保存设置</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================== 安装指南 ========================== -->
+    <section x-show="currentTab === 'docs'" x-cloak class="view-fade" :key="'docs'+reload">
+      <div class="grid grid-cols-1 gap-4 stagger max-w-3xl">
+        <div class="surface border border-soft rounded-lg p-5">
+          <h3 class="text-sm font-semibold mb-2">1. 在管理后台添加服务器</h3>
+          <p class="text-2 text-sm leading-relaxed">在"服务器"标签页输入名称后点击"添加"，会生成一条唯一的安装命令。</p>
+        </div>
+        <div class="surface border border-soft rounded-lg p-5">
+          <h3 class="text-sm font-semibold mb-2">2. 在目标服务器上运行</h3>
+          <p class="text-2 text-sm mb-3 leading-relaxed">SSH 登录你的 VPS 后粘贴执行（需要 root 权限）：</p>
+          <div class="code-block">curl -sL https://your-worker.workers.dev/install.sh | bash -s install &lt;ID&gt; &lt;SECRET&gt; &lt;WORKER_URL&gt;</div>
+          <p class="text-3 text-xs mt-2">支持 Ubuntu / Debian / CentOS / Rocky / AlmaLinux</p>
+        </div>
+        <div class="surface border border-soft rounded-lg p-5">
+          <h3 class="text-sm font-semibold mb-2">3. 自定义上报间隔</h3>
+          <p class="text-2 text-sm mb-3">在命令末尾追加间隔秒数（默认 60）：</p>
+          <div class="code-block">... | bash -s install &lt;ID&gt; &lt;SECRET&gt; &lt;WORKER_URL&gt; 30</div>
+        </div>
+        <div class="surface border border-soft rounded-lg p-5">
+          <h3 class="text-sm font-semibold mb-2">4. 卸载探针</h3>
+          <div class="code-block">curl -sL https://your-worker.workers.dev/install.sh | bash -s uninstall</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 底部 -->
+    <footer class="mt-16 pt-6 border-t border-soft text-xs text-3 flex items-center justify-between flex-wrap gap-2">
+      <div>cloudflare-agent 管理后台 · <a class="hover:underline" href="https://github.com/shiro1888/cloudflare-agent" target="_blank">GitHub</a></div>
+      <div class="flex items-center gap-3"><span>按 <span class="kbd">Esc</span> 关闭弹窗</span></div>
+    </footer>
+  </main>
+
+  <!-- ========================== 编辑模态框 ========================== -->
+  <div x-show="editOpen" x-cloak class="fixed inset-0 z-[60] flex items-center justify-center p-4" @keydown.escape.window="editOpen=false">
+    <div class="absolute inset-0 overlay-fade" style="background:rgba(0,0,0,.4)" @click="editOpen=false"></div>
+    <div class="relative surface border border-soft rounded-xl p-6 max-w-md w-full pop-in" style="box-shadow: 0 20px 60px rgba(0,0,0,.15)">
+      <div class="flex items-center justify-between mb-5">
+        <div class="text-base font-semibold">编辑服务器</div>
+        <button @click="editOpen = false" class="btn btn-ghost btn-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <template x-if="editing">
+        <div class="space-y-3">
+          <div>
+            <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">名称</label>
+            <input x-model="editing.name" class="input" />
+          </div>
+          <div>
+            <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">分组</label>
+            <select x-model="editing.group" class="input">
+              <option value="Default">默认分组</option>
+              <option value="亚太">亚太</option>
+              <option value="欧美">欧美</option>
+              <option value="国内">国内</option>
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">价格</label>
+              <input x-model="editing.price" class="input" placeholder="$5/mo" />
+            </div>
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">到期日期</label>
+              <input x-model="editing.expire" class="input" placeholder="2026-12-31" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">带宽</label>
+              <input x-model="editing.bandwidth" class="input" placeholder="1Gbps" />
+            </div>
+            <div>
+              <label class="text-[11px] text-3 uppercase tracking-wider mb-1.5 block">流量限额</label>
+              <input x-model="editing.trafficLimit" class="input" placeholder="1TB" />
+            </div>
+          </div>
+        </div>
+      </template>
+      <div class="flex justify-end gap-2 mt-6">
+        <button @click="editOpen = false" class="btn">取消</button>
+        <button @click="saveEdit()" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 复制命令模态框 -->
+  <div x-show="cmdModalOpen" x-cloak class="fixed inset-0 z-[60] flex items-center justify-center p-4" @keydown.escape.window="cmdModalOpen=false">
+    <div class="absolute inset-0 overlay-fade" style="background:rgba(0,0,0,.4)" @click="cmdModalOpen=false"></div>
+    <div class="relative surface border border-soft rounded-xl p-6 max-w-2xl w-full pop-in" style="box-shadow: 0 20px 60px rgba(0,0,0,.15)">
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-base font-semibold">安装命令</div>
+        <button @click="cmdModalOpen = false" class="btn btn-ghost btn-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <p class="text-sm text-2 mb-3">SSH 到你的服务器，粘贴下面的命令执行：</p>
+      <div class="code-block mb-3" x-text="cmdText"></div>
+      <div class="flex items-center gap-2 text-xs text-3 mb-4">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        <span>需要 root 权限。系统支持：Ubuntu / Debian / CentOS / Rocky</span>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button @click="cmdModalOpen = false" class="btn">关闭</button>
+        <button @click="copyToClipboard(cmdText); toast('已复制到剪贴板'); cmdModalOpen=false" class="btn btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          复制
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast-stack">
+    <template x-for="t in toasts" :key="t.id">
+      <div class="toast">
+        <span x-text="t.icon"></span>
+        <span x-text="t.msg"></span>
+      </div>
+    </template>
+  </div>
+
+  <script>
+    function admin() {
+      const COUNTRIES = ['HK','SG','JP','US','DE','FR','CN'];
+      const NAMES = ['tokyo-01','hk-edge','frankfurt','sg-app','la-cdn','paris-1','seoul'];
+      const rand = (a,b) => Math.round(a + Math.random()*(b-a));
+      const seed = [];
+      for (let i = 0; i < 7; i++) {
+        seed.push({
+          id: 'srv-' + Math.random().toString(36).slice(2, 10),
+          name: NAMES[i] || ('node-'+i),
+          country: COUNTRIES[i % COUNTRIES.length],
+          group: ['Default','亚太','欧美','国内'][i%4],
+          price: ['$5/mo','$8/mo','免费','$3/mo','$12/mo'][i%5],
+          expire: ['2026-12-31','永久','2027-06-30','永久',''][i%5],
+          bandwidth: ['1Gbps','500Mbps','100Mbps','-'][i%4],
+          trafficLimit: ['1TB','500GB','无限','100GB'][i%4],
+          online: i !== 3,
+        });
+      }
+
+      return {
+        theme: 'light',
+        currentTab: 'servers',
+        segStyle: 'left:4px;width:0px;',
+        reload: 0,
+        servers: seed,
+        newName: '',
+        newGroup: 'Default',
+        search: '',
+        selected: [],
+        editOpen: false,
+        editing: null,
+        cmdModalOpen: false,
+        cmdText: '',
+        toasts: [],
+        settings: {
+          siteTitle: 'cloudflare-agent',
+          theme: 'auto',
+          customCss: '',
+          showPrice: true,
+          showExpire: true,
+          showBw: true,
+          isPublic: true,
+          autoResetTraffic: false,
+          notifyType: 'off',
+          notifyAfter: '300',
+          botToken: '',
+          chatId: '',
+        },
+
+        tabs: [
+          { id: 'servers',  label: '服务器' },
+          { id: 'settings', label: '设置' },
+          { id: 'docs',     label: '文档' },
+        ],
+
+        get onlineCount() { return this.servers.filter(s => s.online).length; },
+        get filteredServers() {
+          if (!this.search) return this.servers;
+          const q = this.search.toLowerCase();
+          return this.servers.filter(s => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || s.group.toLowerCase().includes(q));
+        },
+
+        addServer() {
+          const name = (this.newName || '').trim();
+          if (!name) { this.toast('请输入服务器名称', '⚠'); return; }
+          const id = 'srv-' + Math.random().toString(36).slice(2, 10);
+          this.servers.unshift({
+            id, name, country: 'XX', group: this.newGroup,
+            price: '', expire: '', bandwidth: '', trafficLimit: '',
+            online: false,
+          });
+          this.newName = '';
+          this.toast('已添加 ' + name);
+        },
+        editServer(s) {
+          this.editing = { ...s };
+          this.editOpen = true;
+        },
+        saveEdit() {
+          const idx = this.servers.findIndex(x => x.id === this.editing.id);
+          if (idx >= 0) this.servers[idx] = { ...this.editing };
+          this.editOpen = false;
+          this.toast('已保存');
+        },
+        deleteServer(s) {
+          if (!confirm(`确定删除 ${s.name}？`)) return;
+          this.servers = this.servers.filter(x => x.id !== s.id);
+          this.selected = this.selected.filter(id => id !== s.id);
+          this.toast('已删除 ' + s.name);
+        },
+        copyCmd(s) {
+          this.cmdText = `curl -sL https://your-worker.workers.dev/install.sh | bash -s install ${s.id} YOUR_API_SECRET https://your-worker.workers.dev/update 60`;
+          this.cmdModalOpen = true;
+        },
+        copyToClipboard(text) {
+          navigator.clipboard.writeText(text).catch(()=>{});
+        },
+        toggleSelect(id) {
+          if (this.selected.includes(id)) this.selected = this.selected.filter(x => x !== id);
+          else this.selected.push(id);
+        },
+        toggleAll(e) {
+          if (e.target.checked) this.selected = this.filteredServers.map(s => s.id);
+          else this.selected = [];
+        },
+        batchDelete() {
+          if (this.selected.length === 0) return;
+          if (!confirm(`确定删除选中的 ${this.selected.length} 台服务器？`)) return;
+          this.servers = this.servers.filter(s => !this.selected.includes(s.id));
+          this.toast(`已删除 ${this.selected.length} 台`);
+          this.selected = [];
+        },
+        saveSettings() { this.toast('设置已保存'); },
+        resetSettings() {
+          this.settings = {
+            siteTitle: 'cloudflare-agent', theme: 'auto', customCss: '',
+            showPrice: true, showExpire: true, showBw: true, isPublic: true,
+            autoResetTraffic: false, notifyType: 'off', notifyAfter: '300',
+            botToken: '', chatId: '',
+          };
+          this.toast('已恢复默认设置');
+        },
+        logout() {
+          if (confirm('确定退出登录？')) location.href = 'index.html';
+        },
+        toast(msg, icon='✓') {
+          const id = Date.now() + Math.random();
+          this.toasts.push({ id, msg, icon });
+          setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 2000);
+        },
+        updateSeg() {
+          const seg = this.$refs.seg;
+          if (!seg) return;
+          const idx = this.tabs.findIndex(t => t.id === this.currentTab);
+          const target = seg.querySelector(`[data-seg-idx="${idx}"]`);
+          if (!target) return;
+          this.segStyle = `left:${target.offsetLeft}px;width:${target.offsetWidth}px;`;
+        },
+
+        init() {
+          this.$watch('currentTab', () => { this.$nextTick(() => this.updateSeg()); this.reload++; });
+          this.$nextTick(() => this.updateSeg());
+          window.addEventListener('resize', () => this.updateSeg());
+
+          if (window.matchMedia('(prefers-color-scheme: dark)').matches) this.theme = 'dark';
+        }
+      };
+    }
+  </script>
+</body>
+</html>
