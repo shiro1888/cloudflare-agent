@@ -14,9 +14,10 @@ crons = ["*/2 * * * *", "0 0 * * *"]
 directory = "./public"
 binding = "ASSETS"
 
-# D1 数据库绑定（通过名称自动匹配，无需 database_id）
+# D1 数据库绑定
 [[d1_databases]]
 binding = "DB"
 database_name = "server-monitor-db"
+database_id = "dcfcf4f9-3cc2-4ac1-af0a-37a84dc6004a"
 
 [vars]
