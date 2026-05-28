@@ -124,18 +124,25 @@ export async function handleLoginPage(request, env, sys) {
       opacity: .7; cursor: not-allowed;
     }
     .spinner {
-      width: 16px; height: 16px;
-      border-radius: 50%;
-      border: 2px solid rgba(255, 255, 255, 0.18);
-      border-top-color: rgba(255, 255, 255, 0.95);
-      animation: spin 1.6s cubic-bezier(0.6, 0, 0.4, 1) infinite;
-      box-sizing: border-box;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
     }
-    @keyframes spin {
-      0%   { transform: rotate(0deg); }
-      45%  { transform: rotate(180deg); }
-      55%  { transform: rotate(180deg); }
-      100% { transform: rotate(360deg); }
+    .spinner::before,
+    .spinner::after,
+    .spinner > span {
+      content: '';
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.85);
+      animation: dot-bounce 1.4s ease-in-out infinite;
+    }
+    .spinner::before { animation-delay: 0s; }
+    .spinner > span { animation-delay: 0.2s; }
+    .spinner::after  { animation-delay: 0.4s; }
+    @keyframes dot-bounce {
+      0%, 60%, 100% { transform: translateY(0);    opacity: 0.4; }
+      30%           { transform: translateY(-6px); opacity: 1; }
     }
   </style>
 </head>
@@ -185,7 +192,7 @@ export async function handleLoginPage(request, env, sys) {
       </div>
       <button type="submit" class="btn btn-primary login-btn" :data-loading="loading">
         <template x-if="!loading"><span>登录</span></template>
-        <template x-if="loading"><span class="spinner"></span></template>
+        <template x-if="loading"><span class="spinner"><span></span></span></template>
       </button>
     </form>
 
