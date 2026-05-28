@@ -129,16 +129,21 @@ export async function handleLoginPage(request, env, sys) {
       gap: 5px;
     }
     .spinner::before,
-    .spinner::after,
-    .spinner > span {
+    .spinner::after {
       content: '';
       width: 6px; height: 6px;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.85);
       animation: dot-bounce 1.4s ease-in-out infinite;
     }
+    .spinner > span {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.85);
+      animation: dot-bounce 1.4s ease-in-out infinite;
+      animation-delay: 0.2s;
+    }
     .spinner::before { animation-delay: 0s; }
-    .spinner > span { animation-delay: 0.2s; }
     .spinner::after  { animation-delay: 0.4s; }
     @keyframes dot-bounce {
       0%, 60%, 100% { transform: translateY(0);    opacity: 0.4; }

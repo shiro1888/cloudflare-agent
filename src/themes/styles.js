@@ -1,10 +1,9 @@
 // =============================================
-// 主题样式 - 极简风格（浅色 / 深色 / 自动）
+// 主题样式 - 极简风格
 // =============================================
 //
-// 主题取值仅 3 种：'light' | 'dark' | 'auto'（默认）
-// 旧 theme1/theme2/theme6 已不再支持（重构前的遗留），
-// 数据库里若有这些值会被当作 'auto' 处理
+// 主题取值：'light' | 'dark' | 'auto'（默认）
+// auto 跟随系统 prefers-color-scheme
 //
 
 const LIGHT_VARS = `
@@ -63,13 +62,9 @@ export function getThemeStyles(sys) {
 
 export function getFooterHtml() {
   return `
-    <footer class="mt-16 pt-6 border-soft text-center" style="font-size:12px;color:var(--text-3);border-top:1px solid var(--border)">
+    <footer style="margin-top:64px; padding:24px 0; text-align:center; border-top:1px solid var(--border); font-size:12px; color:var(--text-3);">
       Powered by
-      <a href="https://github.com/shiro1888/cloudflare-agent" target="_blank"
-         style="color:var(--text);font-weight:500;text-decoration:none;border-bottom:1px solid transparent"
-         onmouseover="this.style.borderBottomColor='currentColor'" onmouseout="this.style.borderBottomColor='transparent'">
-        cloudflare-agent
-      </a>
+      <a href="https://github.com/shiro1888/cloudflare-agent" target="_blank" rel="noopener" class="footer-link">cloudflare-agent</a>
     </footer>
   `;
 }
@@ -238,8 +233,12 @@ export function getBaseStyles() {
       color: var(--text-2);
     }
 
-    /* 入场动画 - 只在初次渲染跑一次 */
-    .stagger > * { opacity: 0; transform: translateY(12px); animation: fade-rise .9s var(--ease-out-expo) forwards; }
+    /* 入场动画 - 错峰淡入（fill-mode forwards 保持终态，避免任何重渲染时再次闪烁） */
+    .stagger > * {
+      opacity: 0;
+      transform: translateY(12px);
+      animation: fade-rise .9s var(--ease-out-expo) forwards;
+    }
     .stagger > *:nth-child(1)  { animation-delay: .04s; }
     .stagger > *:nth-child(2)  { animation-delay: .08s; }
     .stagger > *:nth-child(3)  { animation-delay: .12s; }
@@ -252,10 +251,6 @@ export function getBaseStyles() {
     .stagger > *:nth-child(10) { animation-delay: .4s; }
     .stagger > *:nth-child(11) { animation-delay: .44s; }
     .stagger > *:nth-child(12) { animation-delay: .48s; }
-    /* 动画结束后，强制保持可见状态，避免后续因任何原因再次触发 opacity 闪烁 */
-    .stagger > * {
-      animation-fill-mode: forwards;
-    }
     @keyframes fade-rise { to { opacity: 1; transform: translateY(0); } }
 
     .view-fade { animation: view-glide .7s var(--ease-out-expo); }
@@ -299,6 +294,14 @@ export function getBaseStyles() {
     .tabular-nums { font-variant-numeric: tabular-nums; }
     [x-cloak] { display: none !important; }
 
+    /* footer 链接 - 用纯 CSS 替代 inline onmouseover */
+    .footer-link {
+      color: var(--text); font-weight: 500;
+      border-bottom: 1px solid transparent;
+      transition: border-color .25s var(--ease-out-expo);
+    }
+    .footer-link:hover { border-bottom-color: currentColor; }
+
     /*
      * 减少动效偏好：尊重系统设置，但保留状态指示动画（呼吸点 / spinner）
      * 这些不是装饰，而是功能性指示，关掉反而让人误以为页面卡住
@@ -309,12 +312,10 @@ export function getBaseStyles() {
         transition-duration: .01ms !important;
       }
       .dot-pulse,
-      .dot-pulse::before,
-      .dot-pulse::after,
       .spinner,
+      .spinner > span,
       .spinner::before,
-      .spinner::after,
-      .spinner > span {
+      .spinner::after {
         animation-duration: revert !important;
       }
     }
