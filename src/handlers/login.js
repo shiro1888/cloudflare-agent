@@ -124,13 +124,19 @@ export async function handleLoginPage(request, env, sys) {
       opacity: .7; cursor: not-allowed;
     }
     .spinner {
-      width: 14px; height: 14px;
-      border: 2px solid currentColor;
-      border-top-color: transparent;
+      width: 16px; height: 16px;
       border-radius: 50%;
-      animation: spin 2.5s ease-in-out infinite;
+      border: 2px solid rgba(255, 255, 255, 0.18);
+      border-top-color: rgba(255, 255, 255, 0.95);
+      animation: spin 1.6s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+      box-sizing: border-box;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes spin {
+      0%   { transform: rotate(0deg); }
+      45%  { transform: rotate(180deg); }
+      55%  { transform: rotate(180deg); }
+      100% { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body class="${themeClass}" x-data="loginApp()" x-init="init()">

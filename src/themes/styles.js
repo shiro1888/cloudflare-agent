@@ -205,13 +205,17 @@ export function getBaseStyles() {
     .tag-online { color: var(--green); border-color: rgba(22,163,74,.25); background: rgba(22,163,74,.06); }
     .tag-offline { color: var(--red); border-color: rgba(220,38,38,.25); background: rgba(220,38,38,.06); }
 
-    /* 状态点 - 缓慢呼吸（像真人深呼吸） */
+    /* 状态点 - 慢呼吸（带停顿） */
     .dot-pulse {
-      animation: dot-breathe 4.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      animation: dot-breathe 8s ease-in-out infinite;
     }
     @keyframes dot-breathe {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%      { opacity: .35; transform: scale(.85); }
+      /* 35% 时间在最亮，停一下；50% 才到达最暗（停一下）；剩下时间慢慢亮回来 */
+      0%   { opacity: 1;    transform: scale(1); }
+      30%  { opacity: 1;    transform: scale(1); }
+      50%  { opacity: 0.2;  transform: scale(0.6); }
+      70%  { opacity: 0.2;  transform: scale(0.6); }
+      100% { opacity: 1;    transform: scale(1); }
     }
 
     /* Toast */
