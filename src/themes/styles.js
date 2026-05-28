@@ -299,8 +299,24 @@ export function getBaseStyles() {
     .tabular-nums { font-variant-numeric: tabular-nums; }
     [x-cloak] { display: none !important; }
 
+    /*
+     * 减少动效偏好：尊重系统设置，但保留状态指示动画（呼吸点 / spinner）
+     * 这些不是装饰，而是功能性指示，关掉反而让人误以为页面卡住
+     */
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        transition-duration: .01ms !important;
+      }
+      .dot-pulse,
+      .dot-pulse::before,
+      .dot-pulse::after,
+      .spinner,
+      .spinner::before,
+      .spinner::after,
+      .spinner > span {
+        animation-duration: revert !important;
+      }
     }
     @media (max-width: 768px) {
       .container { padding: 0 12px; }
